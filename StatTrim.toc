@@ -5,6 +5,8 @@
 ## Author: Bencepo
 ## Version: @project-version@
 ## X-License: All Rights Reserved
+## X-Curse-Project-ID: 1801407
+## X-Wago-ID: jK8Wye6y
 ## SavedVariables: StatTrimDB
 ## IconTexture: Interface\AddOns\StatTrim\Icons\minimap
 

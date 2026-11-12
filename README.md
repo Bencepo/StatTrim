@@ -2,6 +2,8 @@
 
 Trim the stats panel of the character window in WoW Forever down to what you actually look at.
 
+![StatTrim demo](https://bencepo.github.io/media/stattrim/demo.gif)
+
 - **Hide categories or single stats:** a checkbox on every row.
 - **Hide just a category name:** its stats stay and join the category above, so you can build one compact list.
 - **Reorder:** move categories and stats up and down with arrows.

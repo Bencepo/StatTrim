@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- New icon: gilded stat bars, one cut away, for the minimap button and the addon list.
+
 ## 1.0.1
 
 - The stats panel is only laid out again when the game changed it, not ten times a second while the character window is open. Without any hidden or moved stats StatTrim does nothing at all.

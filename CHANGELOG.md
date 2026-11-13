@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- The stats panel is only laid out again when the game changed it, not ten times a second while the character window is open. Without any hidden or moved stats StatTrim does nothing at all.
+- An error during the layout no longer stops StatTrim until a /reload.
+
 ## 1.0.0
 
 - Hide whole categories or single stats in the character window's stats panel.

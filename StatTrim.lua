@@ -391,7 +391,11 @@ local function Rank(list, v, fallback)
   return 1000 + fallback
 end
 
+local touched = false -- rows were moved, faded or got controls since the last RestoreAll
+
 local function RestoreAll()
+  if not (touched or tall) then return end
+  touched = false
   for _, c in ipairs({ container:GetChildren() }) do
     if not c:IsForbidden() then
       Restore(c)
@@ -402,21 +406,19 @@ local function RestoreAll()
   RestoreSB()
 end
 
-function Relayout()
-  if relayouting or not (container and sb) then return end
-  relayouting = true
-
+local function DoRelayout()
   if not Active() then
     RestoreAll()
-    relayouting = false
     return
   end
-  if not MakeTall() then relayouting = false; return end
+  if not MakeTall() then return end
+  touched = true
 
   -- Collect rows; recapture positions Blizzard has (re)set
   local items = {}
   for _, c in ipairs({ container:GetChildren() }) do
     if not c:IsForbidden() and c:IsShown() then
+      c.__stSeen = true
       local isStat, label = RowInfo(c)
       if label then
         if c.__stSet and not IsOurs(c) then c.__stSet = nil; c.__stOrig = nil end
@@ -559,7 +561,26 @@ function Relayout()
       end
     end
   end
+end
+
+-- An error must not leave the guard set: StatTrim would stop working until a /reload.
+function Relayout()
+  if relayouting or not (container and sb) then return end
+  relayouting = true
+  local ok, err = pcall(DoRelayout)
   relayouting = false
+  if not ok then geterrorhandler()(err) end
+end
+
+-- Has Blizzard changed the panel since the last layout? New rows, or rows it moved back.
+local function Stale()
+  for _, c in ipairs({ container:GetChildren() }) do
+    if not c:IsForbidden() and c:IsShown() then
+      if not c.__stSeen then return true end
+      if c.__stSet and not IsOurs(c) then return true end
+    end
+  end
+  return false
 end
 
 local hookedSB
@@ -576,8 +597,13 @@ local function HookSB()
 end
 
 local warned
-function Apply()
+-- fromPoll: the 0.1 s poll while the character window is open; it only lays out again
+-- when Blizzard changed the panel. Every other caller (clicks, settings) always does.
+function Apply(fromPoll)
   if not (CharacterFrame and CharacterFrame:IsVisible()) then return end
+  if fromPoll and container and container:IsVisible() and sb == container:GetParent() then
+    if not ((tall or Active()) and Stale()) then return end
+  end
   if not (container and container:IsVisible()) then container = FindContainer() end
   if not container then return end
   local parent = container:GetParent()
@@ -737,7 +763,7 @@ ev:SetScript("OnEvent", function(_, event, arg)
     driver:SetScript("OnHide", function() editMode = false end)
     driver:SetScript("OnUpdate", function(_, dt)
       acc = acc + dt
-      if acc >= 0.1 then acc = 0; Apply() end
+      if acc >= 0.1 then acc = 0; Apply(true) end
     end)
   end
 end)

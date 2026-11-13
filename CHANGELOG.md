@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- Brighter icon that stays readable on the round minimap button.
+
 ## 1.0.2
 
 - New icon: gilded stat bars, one cut away, for the minimap button and the addon list.

@@ -4,6 +4,7 @@
 ## Notes-deDE: Kategorien und Werte direkt im Charakterfenster ausblenden, zusammenlegen und umsortieren. Zahnrad über dem Werte-Panel oder /stt.
 ## Author: Bencepo
 ## Version: @project-version@
+## X-Website: https://bencepo.github.io/stattrim/
 ## X-License: All Rights Reserved
 ## X-Curse-Project-ID: 1801407
 ## X-Wago-ID: jK8Wye6y

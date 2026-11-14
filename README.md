@@ -23,6 +23,10 @@ Trim the stats panel of the character window in WoW Forever down to what you act
 Forever protects combat values from addons. StatTrim never changes Blizzard's stat list, it only moves and fades the rows Blizzard has already built, so the panel keeps working in combat without errors. Scrolling the panel is done by StatTrim with the mouse wheel while it is active.
 
 
+## Feedback and bug reports
+
+Found a bug or have an idea? [Open an issue](https://github.com/Bencepo/StatTrim/issues/new/choose), it takes a minute. For bugs the Lua error text (from BugSack, or `/console scriptErrors 1`) and your StatTrim version help the most. No GitHub account? Comment on [CurseForge](https://www.curseforge.com/wow/addons/stattrim#comments). Every report gets read.
+
 ## More addons by Bencepo
 
 All addons, live demos and the web pages: **https://bencepo.github.io**

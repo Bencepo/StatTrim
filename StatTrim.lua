@@ -81,7 +81,7 @@ end
 local function Restore(c)
   if not c.__stSet then return end
   c:ClearAllPoints()
-  for _, p in ipairs(c.__stOrig.pts) do c:SetPoint(unpack(p)) end
+  for _, p in ipairs(c.__stOrig.pts) do c:SetPoint(unpack(p, 1, 5)) end
   c.__stSet = nil
 end
 
@@ -238,7 +238,7 @@ local function MakeTall()
 
   proxy = proxy or CreateFrame("Frame", nil, parent)
   proxy:ClearAllPoints()
-  for _, p in ipairs(pts) do proxy:SetPoint(unpack(p)) end
+  for _, p in ipairs(pts) do proxy:SetPoint(unpack(p, 1, 5)) end
   if #pts < 2 then proxy:SetSize(sbOrig.w, viewH) end
 
   wipe(moved)
@@ -260,13 +260,13 @@ end
 local function RestoreSB()
   if not tall or InCombatLockdown() then return end
   sb:ClearAllPoints()
-  for _, p in ipairs(sbOrig.pts) do sb:SetPoint(unpack(p)) end
+  for _, p in ipairs(sbOrig.pts) do sb:SetPoint(unpack(p, 1, 5)) end
   sb:SetHeight(viewH)
   sb:SetHitRectInsets(unpack(sbOrig.hit))
   for i = #moved, 1, -1 do
     local m = moved[i]
     m.obj:ClearAllPoints()
-    for _, p in ipairs(m.pts) do m.obj:SetPoint(unpack(p)) end
+    for _, p in ipairs(m.pts) do m.obj:SetPoint(unpack(p, 1, 5)) end
   end
   wipe(moved)
   tall = false
@@ -289,10 +289,16 @@ local function Move(kind, cat, label, dir)
   Apply()
 end
 
+local function TipOnEnter(self)
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(self.__stTip, 1, 1, 1); GameTooltip:Show()
+end
+
+-- scripts are set once per frame; later calls only change the text
 local function SetTip(f, text)
-  f:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(text, 1, 1, 1); GameTooltip:Show()
-  end)
+  f.__stTip = text
+  if f.__stTipSet then return end
+  f.__stTipSet = true
+  f:SetScript("OnEnter", TipOnEnter)
   f:SetScript("OnLeave", GameTooltip_Hide)
 end
 
@@ -341,7 +347,7 @@ local function RestoreText(c)
     if r:GetObjectType() == "FontString" and r.__stEdit then
       if r.__stPts then
         r:ClearAllPoints()
-        for _, p in ipairs(r.__stPts) do r:SetPoint(unpack(p)) end
+        for _, p in ipairs(r.__stPts) do r:SetPoint(unpack(p, 1, 5)) end
       end
       if r.__stAlpha then r:SetAlpha(r.__stAlpha) end
       r.__stEdit, r.__stPts, r.__stAlpha = nil, nil, nil
@@ -349,7 +355,33 @@ local function RestoreText(c)
   end
 end
 
+-- false if Blizzard reset the shifted label's points or a faded text's alpha
+local function TextIntact(c)
+  for _, r in ipairs({ c:GetRegions() }) do
+    if r.__stEdit and r:GetObjectType() == "FontString" then
+      if r.__stPts then
+        local p = r.__stPts[1]
+        local _, _, _, x = r:GetPoint(1)
+        if not (p and x) or math.abs(x - ((p[4] or 0) + LABEL_SHIFT)) > 0.01 then return false end
+      elseif r.__stAlpha and r:GetAlpha() > 0 then
+        return false
+      end
+    end
+  end
+  return true
+end
+
 local function EditText(c, isStat)
+  if c.__stTextEdited == "stat" and not TextIntact(c) then
+    -- Blizzard put the label back itself: drop the stale state, keep its points
+    for _, r in ipairs({ c:GetRegions() }) do
+      if r.__stEdit then
+        if r.__stAlpha then r:SetAlpha(r.__stAlpha) end
+        r.__stEdit, r.__stPts, r.__stAlpha = nil, nil, nil
+      end
+    end
+    c.__stTextEdited = nil
+  end
   if c.__stTextEdited == (isStat and "stat" or "head") then return end
   RestoreText(c)
   if not isStat then c.__stTextEdited = "head"; return end
@@ -479,14 +511,23 @@ local function DoRelayout()
   curStats = {}
   for _, g in ipairs(groups) do
     local order = db.order.stats[g.cat]
-    for p, it in ipairs(g.stats) do it.pos = p; it.host = g.cat end
+    -- merged stats are keyed with their own category, so equal labels stay apart
+    for p, it in ipairs(g.stats) do
+      it.pos = p; it.host = g.cat
+      it.okey = (it.cat == g.cat) and it.label or Key(it.cat, it.label)
+    end
+    local function SRank(it)
+      local r = Rank(order, it.okey, it.pos)
+      if r > 1000 and it.okey ~= it.label then r = Rank(order, it.label, it.pos) end
+      return r
+    end
     table.sort(g.stats, function(a, b)
-      local ra, rb = Rank(order, a.label, a.pos), Rank(order, b.label, b.pos)
+      local ra, rb = SRank(a), SRank(b)
       if ra ~= rb then return ra < rb end
       return a.pos < b.pos
     end)
     local labels = {}
-    for i, it in ipairs(g.stats) do labels[i] = it.label end
+    for i, it in ipairs(g.stats) do labels[i] = it.okey end
     curStats[g.cat] = labels
   end
 
@@ -551,7 +592,8 @@ local function DoRelayout()
         end
         SetTip(t.cb, it.stat and "Show stat" or "Show whole category")
         local mc = it.stat and (it.host or it.cat) or it.cat
-        t.up.cat, t.up.label, t.down.cat, t.down.label = mc, it.label, mc, it.label
+        local ml = it.stat and it.okey or it.label
+        t.up.cat, t.up.label, t.down.cat, t.down.label = mc, ml, mc, ml
         t.cb:Show(); t.up:Show(); t.down:Show()
         EditText(c, it.stat)
         SetVisual(c, it.hide and "dim" or "show")
@@ -668,6 +710,55 @@ function RefreshOptions()
   opt.content:SetHeight(math.max(y, 10))
 end
 
+local BUG_URL = "https://github.com/Bencepo/StatTrim/issues/new/choose"
+local bugPopup
+
+-- addons cannot open a browser: show the link selected, ready for Ctrl+C
+local function showBugPopup()
+  if not bugPopup then
+    local f = CreateFrame("Frame", "StatTrimBugPopup", UIParent, "BackdropTemplate")
+    f:SetSize(420, 96)
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetToplevel(true)
+    f:SetClampedToScreen(true)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
+    f:EnableMouse(true)
+    f:SetBackdrop({
+      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      tile = true, tileSize = 16, edgeSize = 16,
+      insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    f:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    tinsert(UISpecialFrames, "StatTrimBugPopup")
+    local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    t:SetPoint("TOPLEFT", 14, -12)
+    t:SetText("Report a bug")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", -2, -2)
+    local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+    eb:SetSize(380, 22)
+    eb:SetPoint("TOPLEFT", 20, -34)
+    eb:SetAutoFocus(false)
+    -- read-only: typing puts the link back
+    eb:SetScript("OnTextChanged", function(self)
+      if self:GetText() ~= BUG_URL then self:SetText(BUG_URL); self:HighlightText() end
+    end)
+    eb:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    eb:SetScript("OnMouseUp", function(self) self:HighlightText() end)
+    eb:SetScript("OnEscapePressed", function() f:Hide() end)
+    f.eb = eb
+    local h = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    h:SetPoint("TOPLEFT", eb, "BOTTOMLEFT", -4, -6)
+    h:SetText("Copy with Ctrl+C. No GitHub account? Comment on CurseForge.")
+    bugPopup = f
+  end
+  bugPopup:Show()
+  bugPopup.eb:SetText(BUG_URL)
+  bugPopup.eb:SetFocus()
+  bugPopup.eb:HighlightText()
+end
+
 local function BuildOptions()
   opt = CreateFrame("Frame", "StatTrimOptions", UIParent, "BasicFrameTemplateWithInset")
   opt:SetSize(300, 480); opt:SetPoint("CENTER"); opt:SetFrameStrata("DIALOG")
@@ -681,7 +772,7 @@ local function BuildOptions()
   title:SetPoint("TOP", 0, -5); title:SetText("StatTrim – checked = visible")
 
   local sf = CreateFrame("ScrollFrame", nil, opt, "UIPanelScrollFrameTemplate")
-  sf:SetPoint("TOPLEFT", 12, -32); sf:SetPoint("BOTTOMRIGHT", -32, 42)
+  sf:SetPoint("TOPLEFT", 12, -32); sf:SetPoint("BOTTOMRIGHT", -32, 72)
   opt.content = CreateFrame("Frame", nil, sf); opt.content:SetSize(240, 10)
   sf:SetScrollChild(opt.content)
   opt.checks = {}
@@ -693,6 +784,10 @@ local function BuildOptions()
   local reset = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
   reset:SetSize(120, 22); reset:SetPoint("BOTTOMLEFT", 12, 12); reset:SetText("Show all")
   reset:SetScript("OnClick", function() wipe(db.hidden); Apply(); RefreshOptions() end)
+
+  local bug = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
+  bug:SetHeight(22); bug:SetPoint("BOTTOMLEFT", 12, 40); bug:SetPoint("BOTTOMRIGHT", -12, 40)
+  bug:SetText("Report a bug"); bug:SetScript("OnClick", showBugPopup)
 
   local forget = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
   forget:SetSize(120, 22); forget:SetPoint("BOTTOMRIGHT", -12, 12); forget:SetText("Rescan list")
@@ -721,7 +816,7 @@ local function Dump()
   p("Tall mode:", tall and "yes" or "no", "view height:", viewH and string.format("%.0f", viewH) or "-",
     "scroll:", string.format("%.0f/%.0f", scroll, maxScroll))
   for _, c in ipairs({ container:GetChildren() }) do
-    if c:IsShown() then
+    if not c:IsForbidden() and c:IsShown() then
       local isStat, label = RowInfo(c)
       if label then
         local pt, rel, rp, x, y = c:GetPoint(1)
@@ -738,6 +833,7 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
+ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:SetScript("OnEvent", function(_, event, arg)
   if event == "ADDON_LOADED" and arg == ADDON then
     StatTrimDB = StatTrimDB or {}
@@ -752,6 +848,9 @@ ev:SetScript("OnEvent", function(_, event, arg)
       db.known.stats[old] = nil
       for i = #db.known.cats, 1, -1 do if db.known.cats[i] == old then tremove(db.known.cats, i) end end
     end
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    -- RestoreSB() waits out combat; finish it now if StatTrim has nothing left to do
+    if tall and db and not Active() then RestoreSB() end
   elseif event == "PLAYER_LOGIN" then
     if not CharacterFrame then
       print("|cff66ccffStatTrim|r CharacterFrame not found – addon inactive.")
@@ -771,6 +870,7 @@ end)
 SLASH_STATTRIM1 = "/stattrim"
 SLASH_STATTRIM2 = "/stt"
 SlashCmdList.STATTRIM = function(msg)
+  if not db then return end
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if msg == "dump" then Dump()
   elseif msg == "reset" then

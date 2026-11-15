@@ -17,6 +17,9 @@ Trim the stats panel of the character window in WoW Forever down to what you act
 - `/stt list` - all categories and stats in a separate window
 - `/stt reset` - show everything again
 - `/stt order` - restore the original order
+- `/stt dump` - debug output of the stats panel layout (open the character window first)
+
+`/stattrim` works the same as `/stt`.
 
 ## Combat
 

@@ -1,38 +1,34 @@
 # StatTrim
 
-Trim the stats panel of the character window in WoW Forever down to what you actually look at.
+**A tidy character window.** Trim the stats panel of the character window down to what you actually look at: hide, merge and reorder categories and stats right in the window.
 
 **Website and live demo:** https://bencepo.github.io/stattrim/
 
 ![StatTrim demo](https://bencepo.github.io/media/stattrim/demo.gif)
 
-- **Hide categories or single stats:** a checkbox on every row.
-- **Hide just a category name:** its stats stay and join the category above, so you can build one compact list.
-- **Reorder:** move categories and stats up and down with arrows.
-- **Edit right in the window:** click the gear icon above the stats panel. Rows you turned off are shown faded until you leave edit mode.
+## What it does
 
-## Commands
+- **Hide categories or stats.** A checkbox on every row.
+- **Merge categories.** Hide just a category name: its stats join the category above.
+- **Reorder.** Move categories and stats up and down with arrows.
+- **Edit in the window.** The gear icon above the stats panel switches edit mode on and off.
 
-- `/stt` - toggle edit mode (same as the gear icon)
-- `/stt list` - all categories and stats in a separate window
-- `/stt reset` - show everything again
-- `/stt order` - restore the original order
-- `/stt dump` - debug output of the stats panel layout (open the character window first)
+## How to use
 
-`/stattrim` works the same as `/stt`.
+- Open the character window and click the gear icon above the stats.
+- `/stt reset` shows everything again, `/stt order` restores the original order.
 
-## Combat
+## Good to know
 
-Forever protects combat values from addons. StatTrim never changes Blizzard's stat list, it only moves and fades the rows Blizzard has already built, so the panel keeps working in combat without errors. Scrolling the panel is done by StatTrim with the mouse wheel while it is active.
-
+- StatTrim never changes Blizzard's stat list, it only moves and fades the rows. So it keeps working in combat without errors.
 
 ## Feedback and bug reports
 
-Found a bug or have an idea? [Open an issue](https://github.com/Bencepo/StatTrim/issues/new/choose), it takes a minute. For bugs the Lua error text (from BugSack, or `/console scriptErrors 1`) and your StatTrim version help the most. No GitHub account? Comment on [CurseForge](https://www.curseforge.com/wow/addons/stattrim#comments). Every report gets read.
+Found a bug or have an idea? [Open an issue](https://github.com/Bencepo/StatTrim/issues/new/choose), it takes a minute. No GitHub account? Comment on [CurseForge](https://www.curseforge.com/wow/addons/stattrim#comments). Every report gets read.
 
-## More addons by Bencepo
+## More from Bencepo
 
-All addons, live demos and the web pages: **https://bencepo.github.io**
+All addons, live demos and guides: **https://bencepo.github.io**
 
 Like the addons? Support them on Ko-fi: **https://ko-fi.com/bencepo**
 

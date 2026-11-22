@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- The list window has the look of the other Bencepo addons (BencepoUI): it can be dragged anywhere, remembers its place, and "Report a bug" sits in its footer.
+
 ## 1.0.6
 
 - The list window (show/hide every stat, report a bug) opens with a right-click on the gear icon and from the addon menu at the minimap. No chat command needed.

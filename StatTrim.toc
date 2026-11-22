@@ -11,4 +11,6 @@
 ## IconTexture: Interface\AddOns\StatTrim\Icons\minimap
 ## AddonCompartmentFunc: StatTrim_OnCompartmentClick
 
+Libs\LibStub\LibStub.lua
+Libs\BencepoUI\BencepoUI.lua
 StatTrim.lua

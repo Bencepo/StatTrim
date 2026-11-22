@@ -4,7 +4,8 @@ StatTrim: hide, merge and reorder categories and stats in the character window o
 
 ## Layout
 
-- `StatTrim.lua`: everything. No libraries.
+- `StatTrim.lua`: everything in the game.
+- `Libs/`: LibStub and BencepoUI (the list window, as in the other Bencepo addons; `opts.bugUrl` gives "Report a bug"). BencepoUI must be the same file in each Bencepo addon (canonical: minor 4, Nov 2026). Change it in one repo, bump the LibStub minor, copy it to the others: two different copies with the same minor make the result depend on load order.
 - `Icons/minimap.tga`: in-game icon from the Bencepo logo family. `media/logo.png`: logo for CurseForge, Wago and the website (not packaged).
 
 ## How it works

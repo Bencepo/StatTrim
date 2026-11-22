@@ -666,19 +666,41 @@ function Apply(fromPoll)
 end
 
 ---------------------------------------------------------------------------
--- List window (/stt list)
+-- List window: every known category and stat with a checkbox (BencepoUI, like the
+-- settings of the other Bencepo addons; "Report a bug" sits in its footer)
 ---------------------------------------------------------------------------
+local BUG_URL = "https://github.com/Bencepo/StatTrim/issues/new/choose"
+local ACCENT = { 0.40, 0.80, 1, 1 }
+local OPT_W, OPT_H = 340, 460
+local WHITE = "Interface\\Buttons\\WHITE8X8"
+
+-- A flat checkbox in the window's colours, with its label; the whole line is clickable.
 local function GetCheck(i)
   local cb = opt.checks[i]
   if not cb then
-    cb = CreateFrame("CheckButton", nil, opt.content, "UICheckButtonTemplate")
-    cb:SetSize(22, 22)
+    local T = opt.T
+    cb = CreateFrame("Button", nil, opt.content, "BackdropTemplate")
+    cb:SetSize(16, 16)
+    cb:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = 1 })
+    cb:SetBackdropColor(T.well[1], T.well[2], T.well[3], T.well[4] or 1)
+    cb:SetBackdropBorderColor(T.line[1], T.line[2], T.line[3], 1)
+    cb.mark = cb:CreateTexture(nil, "OVERLAY")
+    cb.mark:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    cb.mark:SetPoint("CENTER", 1, 0)
+    cb.mark:SetSize(20, 20)
+    cb.mark:SetVertexColor(T.accent[1], T.accent[2], T.accent[3])
     cb.label = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    cb.label:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+    cb.label:SetPoint("LEFT", cb, "RIGHT", 8, 0)
+    cb:SetHitRectInsets(0, -230, -3, -3)
+    function cb:SetChecked(v) self.checked = v and true or false; self.mark:SetShown(self.checked) end
+    function cb:GetChecked() return self.checked end
     cb:SetScript("OnClick", function(self)
-      db.hidden[self.key] = (not self:GetChecked()) or nil
+      self:SetChecked(not self.checked)
+      db.hidden[self.key] = (not self.checked) or nil
       Apply(); RefreshOptions()
     end)
+    cb:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(T.accent[1], T.accent[2], T.accent[3], 1) end)
+    cb:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(T.line[1], T.line[2], T.line[3], 1) end)
     opt.checks[i] = cb
   end
   cb:Show()
@@ -688,127 +710,61 @@ end
 function RefreshOptions()
   for _, cb in ipairs(opt.checks) do cb:Hide() end
   opt.empty:SetShown(#db.known.cats == 0)
-  local i, y = 0, 0
+  local i, y = 0, 2
   for _, cat in ipairs(db.known.cats) do
     i = i + 1
     local cb = GetCheck(i)
-    cb:ClearAllPoints(); cb:SetPoint("TOPLEFT", 0, -y)
+    cb:ClearAllPoints(); cb:SetPoint("TOPLEFT", 2, -y)
     cb.key = cat
-    cb:SetChecked(not db.hidden[cat]); cb:Enable()
+    cb:SetChecked(not db.hidden[cat]); cb:Enable(); cb:SetAlpha(1)
     cb.label:SetFontObject("GameFontNormal"); cb.label:SetText(cat)
     y = y + 24
     for _, stat in ipairs(db.known.stats[cat] or {}) do
       i = i + 1
       local scb = GetCheck(i)
-      scb:ClearAllPoints(); scb:SetPoint("TOPLEFT", 20, -y)
+      scb:ClearAllPoints(); scb:SetPoint("TOPLEFT", 22, -y)
       scb.key = Key(cat, stat)
       scb:SetChecked(not db.hidden[scb.key])
       scb.label:SetFontObject("GameFontHighlightSmall"); scb.label:SetText(stat)
-      if db.hidden[cat] then scb:Disable(); scb.label:SetTextColor(0.5, 0.5, 0.5)
-      else scb:Enable(); scb.label:SetTextColor(1, 1, 1) end
-      y = y + 22
+      -- a hidden category hides its stats too: their boxes are greyed out
+      if db.hidden[cat] then scb:Disable(); scb:SetAlpha(0.4) else scb:Enable(); scb:SetAlpha(1) end
+      y = y + 21
     end
     y = y + 6
   end
   opt.content:SetHeight(math.max(y, 10))
 end
 
-local BUG_URL = "https://github.com/Bencepo/StatTrim/issues/new/choose"
-local bugPopup
-
--- addons cannot open a browser: show the link selected, ready for Ctrl+C
-local function showBugPopup()
-  if not bugPopup then
-    local f = CreateFrame("Frame", "StatTrimBugPopup", UIParent, "BackdropTemplate")
-    f:SetSize(420, 96)
-    f:SetFrameStrata("FULLSCREEN_DIALOG")
-    f:SetToplevel(true)
-    f:SetClampedToScreen(true)
-    f:SetPoint("CENTER", UIParent, "CENTER", 0, 120)
-    f:EnableMouse(true)
-    f:SetBackdrop({
-      bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
-      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-      tile = true, tileSize = 16, edgeSize = 16,
-      insets = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    f:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
-    tinsert(UISpecialFrames, "StatTrimBugPopup")
-    local t = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    t:SetPoint("TOPLEFT", 14, -12)
-    t:SetText("Report a bug")
-    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", -2, -2)
-    local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
-    eb:SetSize(380, 22)
-    eb:SetPoint("TOPLEFT", 20, -34)
-    eb:SetAutoFocus(false)
-    -- read-only: typing puts the link back
-    eb:SetScript("OnTextChanged", function(self)
-      if self:GetText() ~= BUG_URL then self:SetText(BUG_URL); self:HighlightText() end
-    end)
-    eb:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-    eb:SetScript("OnMouseUp", function(self) self:HighlightText() end)
-    eb:SetScript("OnEscapePressed", function() f:Hide() end)
-    f.eb = eb
-    local h = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    h:SetPoint("TOPLEFT", eb, "BOTTOMLEFT", -4, -6)
-    h:SetText("Copy with Ctrl+C. No GitHub account? Comment on CurseForge.")
-    bugPopup = f
-  end
-  bugPopup:Show()
-  bugPopup.eb:SetText(BUG_URL)
-  bugPopup.eb:SetFocus()
-  bugPopup.eb:HighlightText()
-end
-
 local function BuildOptions()
-  opt = CreateFrame("Frame", "StatTrimOptions", UIParent, "BasicFrameTemplateWithInset")
-  opt:SetSize(300, 480); opt:SetPoint("CENTER"); opt:SetFrameStrata("DIALOG")
-  opt:SetMovable(true); opt:EnableMouse(true); opt:SetClampedToScreen(true)
-  opt:RegisterForDrag("LeftButton")
-  opt:SetScript("OnDragStart", opt.StartMoving)
-  opt:SetScript("OnDragStop", opt.StopMovingOrSizing)
-  tinsert(UISpecialFrames, "StatTrimOptions")
-
-  local title = opt:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  title:SetPoint("TOP", 0, -5); title:SetText("StatTrim – checked = visible")
-
+  local UI = LibStub("BencepoUI-1.0")
+  opt = UI:CreateWindow({
+    name = "StatTrimOptions", title = "StatTrim", subtitle = "checked = visible",
+    width = OPT_W, height = OPT_H, accent = ACCENT, db = db, posKey = "optPos", bugUrl = BUG_URL,
+    hint = "drag to move",
+  })
   local sf = CreateFrame("ScrollFrame", nil, opt, "UIPanelScrollFrameTemplate")
-  sf:SetPoint("TOPLEFT", 12, -32); sf:SetPoint("BOTTOMRIGHT", -32, 100)
-  opt.content = CreateFrame("Frame", nil, sf); opt.content:SetSize(240, 10)
+  sf:SetPoint("TOPLEFT", 16, -44)
+  sf:SetPoint("BOTTOMRIGHT", opt, "TOPRIGHT", -30, -(OPT_H - 40))
+  opt.content = CreateFrame("Frame", nil, sf)
+  opt.content:SetSize(OPT_W - 60, 10)
   sf:SetScrollChild(opt.content)
   opt.checks = {}
 
   opt.empty = opt.content:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-  opt.empty:SetPoint("TOPLEFT", 4, -4); opt.empty:SetWidth(230); opt.empty:SetJustifyH("LEFT")
+  opt.empty:SetPoint("TOPLEFT", 4, -4); opt.empty:SetWidth(OPT_W - 70); opt.empty:SetJustifyH("LEFT")
   opt.empty:SetText("Nothing detected yet. Open the character window with the stats view once.")
 
-  local reset = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
-  reset:SetSize(120, 22); reset:SetPoint("BOTTOMLEFT", 12, 12); reset:SetText("Show all")
-  reset:SetScript("OnClick", function() wipe(db.hidden); Apply(); RefreshOptions() end)
-
-  local order = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
-  order:SetHeight(22); order:SetPoint("BOTTOMLEFT", 12, 40); order:SetPoint("BOTTOMRIGHT", -12, 40)
-  order:SetText("Default order")
-  order:SetScript("OnClick", function() db.order = { cats = nil, stats = {} }; Apply() end)
-  order:SetScript("OnEnter", function(self)
-    GameTooltip:SetOwner(self, "ANCHOR_TOP")
-    GameTooltip:SetText("Default order", 1, 1, 1)
-    GameTooltip:AddLine("Puts categories and stats back in the game's own order. What is hidden stays hidden.", nil, nil, nil, true)
-    GameTooltip:Show()
-  end)
-  order:SetScript("OnLeave", GameTooltip_Hide)
-
-  local bug = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
-  bug:SetHeight(22); bug:SetPoint("BOTTOMLEFT", 12, 68); bug:SetPoint("BOTTOMRIGHT", -12, 68)
-  bug:SetText("Report a bug"); bug:SetScript("OnClick", showBugPopup)
-
-  local forget = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
-  forget:SetSize(120, 22); forget:SetPoint("BOTTOMRIGHT", -12, 12); forget:SetText("Rescan list")
-  forget:SetScript("OnClick", function()
+  local y = -(OPT_H - 32)
+  local showAll = opt:Button("Show all", 90, function() wipe(db.hidden); Apply(); RefreshOptions() end,
+    "Every category and stat visible again.")
+  showAll:SetPoint("TOPLEFT", 16, y)
+  local rescan = opt:Button("Rescan list", 90, function()
     db.known = { cats = {}, stats = {} }; container = nil; Apply(); RefreshOptions()
-  end)
+  end, "Forgets the list and reads the stats panel again, e.g. after the game added a stat.")
+  rescan:SetPoint("LEFT", showAll, "RIGHT", 6, 0)
+  local order = opt:Button("Default order", 110, function() db.order = { cats = nil, stats = {} }; Apply() end,
+    "Puts categories and stats back in the game's own order. What is hidden stays hidden.")
+  order:SetPoint("LEFT", rescan, "RIGHT", 6, 0)
 end
 
 function ToggleOptions()

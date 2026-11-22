@@ -1,7 +1,6 @@
 ## Interface: 16001
 ## Title: StatTrim
-## Notes: Hide, merge and reorder categories and stats right inside the character window. Gear icon above the stats panel or /stt.
-## Notes-deDE: Kategorien und Werte direkt im Charakterfenster ausblenden, zusammenlegen und umsortieren. Zahnrad über dem Werte-Panel oder /stt.
+## Notes: Hide, merge and reorder categories and stats right inside the character window. Gear icon above the stats panel; right-click it or use the addon menu at the minimap for the list window.
 ## Author: Bencepo
 ## Version: @project-version@
 ## X-Website: https://bencepo.github.io/stattrim/
@@ -10,5 +9,6 @@
 ## X-Wago-ID: jK8Wye6y
 ## SavedVariables: StatTrimDB
 ## IconTexture: Interface\AddOns\StatTrim\Icons\minimap
+## AddonCompartmentFunc: StatTrim_OnCompartmentClick
 
 StatTrim.lua

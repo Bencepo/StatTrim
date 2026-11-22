@@ -5,7 +5,7 @@
 local ADDON = ...
 local db, container, opt, editBtn
 local editMode = false
-local RefreshOptions
+local RefreshOptions, ToggleOptions
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -161,14 +161,17 @@ local function UpdateEditButton()
     editBtn:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
     editBtn:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     editBtn:SetFrameLevel(anchor:GetFrameLevel() + 20)
-    editBtn:SetScript("OnClick", function()
+    editBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    editBtn:SetScript("OnClick", function(_, button)
+      if button == "RightButton" then ToggleOptions() return end
       editMode = not editMode
       Apply()
     end)
     editBtn:SetScript("OnEnter", function(self)
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
       GameTooltip:SetText("StatTrim")
-      GameTooltip:AddLine(editMode and "Finish editing" or "Show/hide and reorder stats", 1, 1, 1)
+      GameTooltip:AddLine(editMode and "Click: finish editing" or "Click: show/hide and reorder stats", 1, 1, 1)
+      GameTooltip:AddLine("Right-click: list window, default order, report a bug", 0.7, 0.7, 0.7)
       GameTooltip:Show()
     end)
     editBtn:SetScript("OnLeave", GameTooltip_Hide)
@@ -772,7 +775,7 @@ local function BuildOptions()
   title:SetPoint("TOP", 0, -5); title:SetText("StatTrim – checked = visible")
 
   local sf = CreateFrame("ScrollFrame", nil, opt, "UIPanelScrollFrameTemplate")
-  sf:SetPoint("TOPLEFT", 12, -32); sf:SetPoint("BOTTOMRIGHT", -32, 72)
+  sf:SetPoint("TOPLEFT", 12, -32); sf:SetPoint("BOTTOMRIGHT", -32, 100)
   opt.content = CreateFrame("Frame", nil, sf); opt.content:SetSize(240, 10)
   sf:SetScrollChild(opt.content)
   opt.checks = {}
@@ -785,8 +788,20 @@ local function BuildOptions()
   reset:SetSize(120, 22); reset:SetPoint("BOTTOMLEFT", 12, 12); reset:SetText("Show all")
   reset:SetScript("OnClick", function() wipe(db.hidden); Apply(); RefreshOptions() end)
 
+  local order = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
+  order:SetHeight(22); order:SetPoint("BOTTOMLEFT", 12, 40); order:SetPoint("BOTTOMRIGHT", -12, 40)
+  order:SetText("Default order")
+  order:SetScript("OnClick", function() db.order = { cats = nil, stats = {} }; Apply() end)
+  order:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Default order", 1, 1, 1)
+    GameTooltip:AddLine("Puts categories and stats back in the game's own order. What is hidden stays hidden.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  order:SetScript("OnLeave", GameTooltip_Hide)
+
   local bug = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
-  bug:SetHeight(22); bug:SetPoint("BOTTOMLEFT", 12, 40); bug:SetPoint("BOTTOMRIGHT", -12, 40)
+  bug:SetHeight(22); bug:SetPoint("BOTTOMLEFT", 12, 68); bug:SetPoint("BOTTOMRIGHT", -12, 68)
   bug:SetText("Report a bug"); bug:SetScript("OnClick", showBugPopup)
 
   local forget = CreateFrame("Button", nil, opt, "UIPanelButtonTemplate")
@@ -796,9 +811,14 @@ local function BuildOptions()
   end)
 end
 
-local function ToggleOptions()
+function ToggleOptions()
   if not opt then BuildOptions() end
   if opt:IsShown() then opt:Hide() else RefreshOptions(); opt:Show() end
+end
+
+-- Entry in the game's addon menu (the button next to the minimap): the list window.
+function StatTrim_OnCompartmentClick()
+  if db then ToggleOptions() end
 end
 
 ---------------------------------------------------------------------------

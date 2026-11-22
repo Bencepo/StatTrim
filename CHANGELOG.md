@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6
+
+- The list window (show/hide every stat, report a bug) opens with a right-click on the gear icon and from the addon menu at the minimap. No chat command needed.
+- New button "Default order" in the list window: categories and stats back in the game's own order, hidden ones stay hidden.
+- English only: the German description in the addon list is removed.
+
 ## 1.0.5
 
 - New icon in the addon list and on the minimap button, part of the new Bencepo logo family.

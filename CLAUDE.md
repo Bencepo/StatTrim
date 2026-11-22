@@ -16,6 +16,7 @@ StatTrim: hide, merge and reorder categories and stats in the character window o
 
 ## Rules
 
-- UI texts in English.
+- English only: UI texts and descriptions, no translations, no `Notes-xxXX` in the .toc.
+- Buttons instead of chat commands: the gear icon (click: edit mode, right-click: list window) and the addon menu entry open everything; the list window has Show all, Rescan list, Default order and Report a bug.
 - CI runs luacheck and LuaLS with the WoW API annotations; LuaLS must report zero diagnostics or the release stops.
 - Release: new version heading at the top of `CHANGELOG.md`, push to `main`; the workflow uploads to CurseForge and Wago. Test in game first.

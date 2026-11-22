@@ -12,6 +12,7 @@ globals = {
 	"SLASH_STATTRIM1",
 	"SLASH_STATTRIM2",
 	"SlashCmdList",
+	"StatTrim_OnCompartmentClick",
 }
 
 exclude_files = { ".release/**", "Libs/**" }

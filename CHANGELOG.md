@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: Lua error "attempt to compare local 'lx' (a secret number value)" when the character window opens. WoW Forever sometimes hides frame positions and sizes as secret values; StatTrim now skips them instead of comparing them.
+
 ## 1.2.0
 
 - Hidden categories/stats and custom stat order are now saved per character (`StatTrimCharDB`), so melee and caster characters keep their own setup. Existing settings from `StatTrimDB` are migrated once automatically.

@@ -39,6 +39,13 @@ local function Clean(t)
   return t
 end
 
+-- A number StatTrim may compare or calculate with: nil for a secret value. WoW Forever hides
+-- frame positions and sizes as secret numbers in some states; comparing one is a Lua error.
+local function Pub(v)
+  if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
+  return v
+end
+
 local function RowInfoRegions(c, ...)
   local n, label, lx = 0, nil, nil
   for i = 1, select("#", ...) do
@@ -47,8 +54,8 @@ local function RowInfoRegions(c, ...)
       n = n + 1
       local ok, t = pcall(Clean, r:GetText())
       if ok and t then
-        local x = r:GetLeft() or 0
-        if not lx or x < lx then label, lx = t, x end
+        local x = Pub(r:GetLeft()) or 0
+        if not label or (lx and x < lx) then label, lx = t, x end
       end
     end
   end
@@ -111,12 +118,13 @@ local function Key(cat, stat) return stat and (cat .. "::" .. stat) or cat end
 -- Positions (legacy path): remember original, restack, restore
 ---------------------------------------------------------------------------
 local function Capture(c)
-  local ct, cl, cr = container:GetTop(), container:GetLeft(), container:GetRight()
-  local t, l, r = c:GetTop(), c:GetLeft(), c:GetRight()
-  if not (ct and cl and cr and t and l and r) then return false end
+  local ct, cl, cr = Pub(container:GetTop()), Pub(container:GetLeft()), Pub(container:GetRight())
+  local t, l, r = Pub(c:GetTop()), Pub(c:GetLeft()), Pub(c:GetRight())
+  local h = Pub(c:GetHeight())
+  if not (ct and cl and cr and t and l and r and h) then return false end
   local pts = {}
   for i = 1, c:GetNumPoints() do pts[i] = { c:GetPoint(i) } end
-  c.__stOrig = { pts = pts, off = ct - t, l = l - cl, r = r - cr, h = c:GetHeight() }
+  c.__stOrig = { pts = pts, off = ct - t, l = l - cl, r = r - cr, h = h }
   return true
 end
 
@@ -124,6 +132,7 @@ local function IsOurs(c)
   local s = c.__stSet
   if not s or c:GetNumPoints() ~= 2 then return false end
   local pt, rel, _, x, y = c:GetPoint(1)
+  x, y = Pub(x), Pub(y)
   return pt == "TOPLEFT" and rel == container
     and math.abs((x or 0) - s.x) < 0.01 and math.abs((y or 0) - s.y) < 0.01
 end
@@ -308,8 +317,8 @@ local function MakeTall()
     return false
   end
   local parent = sb:GetParent()
-  local l, t, pl, pt = sb:GetLeft(), sb:GetTop(), parent:GetLeft(), parent:GetTop()
-  if not (l and t and pl and pt) then return false end
+  local l, t, pl, pt = Pub(sb:GetLeft()), Pub(sb:GetTop()), Pub(parent:GetLeft()), Pub(parent:GetTop())
+  if not (l and t and pl and pt and Pub(sb:GetHeight()) and Pub(sb:GetWidth())) then return false end
   local pts = {}
   for i = 1, sb:GetNumPoints() do pts[i] = { sb:GetPoint(i) } end
   viewH = sb:GetHeight()
@@ -446,8 +455,9 @@ local function TextIntactRegions(...)
       if r.__stPts then
         local p = r.__stPts[1]
         local _, _, _, x = r:GetPoint(1)
+        x = Pub(x)
         if not (p and x) or math.abs(x - ((p[4] or 0) + LABEL_SHIFT)) > 0.01 then return false end
-      elseif r.__stAlpha and r:GetAlpha() > 0 then
+      elseif r.__stAlpha and (Pub(r:GetAlpha()) or 0) > 0 then
         return false
       end
     end
@@ -478,8 +488,8 @@ local function CollectVisibleFS(...)
     local r = select(i, ...)
     if r:GetObjectType() == "FontString" and r:IsShown() then
       editFS[#editFS + 1] = r
-      local x = r:GetLeft()
-      if x and (not lx or x < lx) then label, lx = r, x end
+      local x = Pub(r:GetLeft())
+      if not label or (x and (not lx or x < lx)) then label, lx = r, x end
     end
   end
   return label
@@ -507,7 +517,7 @@ local function EditText(c, isStat)
         r:SetPoint(p[1], p[2], p[3], (p[4] or 0) + LABEL_SHIFT, p[5] or 0)
       end
     else
-      r.__stAlpha = r:GetAlpha()
+      r.__stAlpha = Pub(r:GetAlpha()) or 1
       r:SetAlpha(0)
     end
   end
@@ -640,7 +650,7 @@ local function CollectRows(items, ...)
         if c.__stSet and not IsOurs(c) then c.__stSet = nil; c.__stOrig = nil end
         if c.__stOrig or Capture(c) then
           -- Always read current height so ScrollBox recycling of row #1 never uses a stale height.
-          local h = c:GetHeight()
+          local h = Pub(c:GetHeight()) or 0
           items[#items + 1] = { f = c, stat = isStat, label = label, off = c.__stOrig.off, h = h > 0 and h or c.__stOrig.h }
         end
       end
@@ -980,7 +990,7 @@ local function Dump()
       if label then
         local pt, rel, rp, x, y = c:GetPoint(1)
         p(isStat and "  W" or "H", label, "|", pt, rel and rel.GetDebugName and rel:GetDebugName() or tostring(rel), rp,
-          x and string.format("%.1f", x), y and string.format("%.1f", y), "h=" .. string.format("%.1f", c:GetHeight()))
+          Pub(x) and string.format("%.1f", x), Pub(y) and string.format("%.1f", y), "h=" .. string.format("%.1f", Pub(c:GetHeight()) or -1))
       end
     end
   end

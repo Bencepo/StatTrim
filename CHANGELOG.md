@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
 
 - Hidden categories/stats and custom stat order are now saved per character (`StatTrimCharDB`), so melee and caster characters keep their own setup. Existing settings from `StatTrimDB` are migrated once automatically.
 - Fixed: switching tabs in the character window (Reputation, Currency, Pet) no longer triggers continuous frame scans or mistakes another tab's list for the stats panel, and the gear icon hides on other tabs.

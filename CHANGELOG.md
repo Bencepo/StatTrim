@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.1
 
 - Fixed: Lua error "attempt to compare local 'lx' (a secret number value)" when the character window opens. WoW Forever sometimes hides frame positions and sizes as secret values; StatTrim now skips them instead of comparing them.
 

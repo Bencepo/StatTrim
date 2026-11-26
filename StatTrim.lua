@@ -6,6 +6,7 @@ local ADDON = ...
 local db, container, opt, editBtn
 local editMode = false
 local RefreshOptions, ToggleOptions
+local EMPTY = {}
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -19,10 +20,10 @@ local function Clean(t)
   return t
 end
 
--- isStat, label of a row (nil if no readable text)
-local function RowInfo(c)
+local function RowInfoRegions(c, ...)
   local n, label, lx = 0, nil, nil
-  for _, r in ipairs({ c:GetRegions() }) do
+  for i = 1, select("#", ...) do
+    local r = select(i, ...)
     if r:GetObjectType() == "FontString" and r:IsShown() then
       n = n + 1
       local ok, t = pcall(Clean, r:GetText())
@@ -36,20 +37,51 @@ local function RowInfo(c)
   return (c.Value ~= nil) or n >= 2, label
 end
 
-local function Walk(f, depth, cb)
-  if f:IsForbidden() then return end
-  cb(f)
-  if depth <= 0 then return end
-  for _, c in ipairs({ f:GetChildren() }) do Walk(c, depth - 1, cb) end
+-- isStat, label of a row (nil if no readable text)
+local function RowInfo(c)
+  return RowInfoRegions(c, c:GetRegions())
 end
 
-local function FindContainer()
-  local best, bestN = nil, 0
-  Walk(CharacterFrame, 10, function(f)
-    local n = 0
-    for _, c in ipairs({ f:GetChildren() }) do
-      if not c:IsForbidden() and c:IsVisible() and RowInfo(c) then n = n + 1 end
+local function CountRowChildren(...)
+  local n = 0
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if not c:IsForbidden() and c:IsVisible() and RowInfo(c) then n = n + 1 end
+  end
+  return n
+end
+
+local function WalkChildren(depth, cb, ...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if not c:IsForbidden() then
+      cb(c)
+      if depth > 0 then WalkChildren(depth - 1, cb, c:GetChildren()) end
     end
+  end
+end
+
+local function Walk(f, depth, cb)
+  if not f or f:IsForbidden() then return end
+  cb(f)
+  if depth <= 0 then return end
+  WalkChildren(depth - 1, cb, f:GetChildren())
+end
+
+-- Restrict discovery to the stats pane / PaperDollFrame so switching CharacterFrame tabs
+-- (Reputation, Currency, Pet) can never hijack another tab's ScrollBox.
+local function FindContainer()
+  local root = (CharacterStatsPane and CharacterStatsPane:IsVisible() and CharacterStatsPane)
+    or (PaperDollFrame and PaperDollFrame:IsVisible() and PaperDollFrame)
+  if not root then
+    -- Fallback only if PaperDollFrame does not exist on this client layout.
+    if PaperDollFrame or not (CharacterFrame and CharacterFrame:IsVisible()) then return nil end
+    root = CharacterFrame
+  end
+  local best, bestN = nil, 0
+  Walk(root, 10, function(f)
+    if not f:IsVisible() then return end
+    local n = CountRowChildren(f:GetChildren())
     if n > bestN then best, bestN = f, n end
   end)
   if bestN >= 5 then return best end
@@ -90,7 +122,12 @@ local function Place(c, off)
   c:ClearAllPoints()
   c:SetPoint("TOPLEFT", container, "TOPLEFT", o.l, -off)
   c:SetPoint("TOPRIGHT", container, "TOPRIGHT", o.r, -off)
-  c.__stSet = { x = o.l, y = -off }
+  local s = c.__stSet
+  if s then
+    s.x, s.y = o.l, -off
+  else
+    c.__stSet = { x = o.l, y = -off }
+  end
 end
 
 -- mode: "show" | "dim" | "hide"
@@ -135,22 +172,34 @@ end
 ---------------------------------------------------------------------------
 -- Scan + apply
 ---------------------------------------------------------------------------
+local knownSets = {}
 local function Remember(items)
   local changed, k = false, db.known
-  for _, it in ipairs(items) do
+  for i = 1, #items do
+    local it = items[i]
     if it.cat then
       if not k.stats[it.cat] then
         k.stats[it.cat] = {}; tinsert(k.cats, it.cat); changed = true
       end
       if it.stat then
-        local found = false
-        for _, s in ipairs(k.stats[it.cat]) do if s == it.label then found = true break end end
-        if not found then tinsert(k.stats[it.cat], it.label); changed = true end
+        local set = knownSets[it.cat]
+        if not set then
+          set = {}
+          for _, s in ipairs(k.stats[it.cat]) do set[s] = true end
+          knownSets[it.cat] = set
+        end
+        if not set[it.label] then
+          set[it.label] = true
+          tinsert(k.stats[it.cat], it.label)
+          changed = true
+        end
       end
     end
   end
   return changed
 end
+
+local tall -- forward declaration for editBtn combat guard
 
 local function UpdateEditButton()
   if not container then return end
@@ -164,6 +213,10 @@ local function UpdateEditButton()
     editBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     editBtn:SetScript("OnClick", function(_, button)
       if button == "RightButton" then ToggleOptions() return end
+      if not editMode and not tall and InCombatLockdown() then
+        print("|cff66ccffStatTrim|r Edit mode can only be entered out of combat.")
+        return
+      end
       editMode = not editMode
       Apply()
     end)
@@ -188,10 +241,12 @@ end
 -- The ScrollBox is made tall once (out of combat) so every row frame exists,
 -- then rows are only repositioned / faded. Scrolling is handled by StatTrim.
 ---------------------------------------------------------------------------
-local sb, sbOrig, tall, viewH
+local sb, sbOrig, viewH
 local scroll, maxScroll = 0, 0
 local relayouting = false
+local pendingRelayout = false
 local curCats, curStats = {}, {} -- current order (for arrows)
+local lastFinal = {}             -- cached ordered rows for lightweight wheel scrolling
 local TALL_HEIGHT = 2000
 local WHEEL_STEP = 46
 
@@ -230,7 +285,10 @@ end
 
 local function MakeTall()
   if tall then return true end
-  if InCombatLockdown() then return false end
+  if InCombatLockdown() then
+    pendingRelayout = true
+    return false
+  end
   local parent = sb:GetParent()
   local l, t, pl, pt = sb:GetLeft(), sb:GetTop(), parent:GetLeft(), parent:GetTop()
   if not (l and t and pl and pt) then return false end
@@ -343,11 +401,10 @@ end
 -- so the arrows don't cover it. Restored when edit mode ends.
 local LABEL_SHIFT = 14
 
-local function RestoreText(c)
-  if not c.__stTextEdited then return end
-  c.__stTextEdited = nil
-  for _, r in ipairs({ c:GetRegions() }) do
-    if r:GetObjectType() == "FontString" and r.__stEdit then
+local function RestoreTextRegions(...)
+  for i = 1, select("#", ...) do
+    local r = select(i, ...)
+    if r.__stEdit and r:GetObjectType() == "FontString" then
       if r.__stPts then
         r:ClearAllPoints()
         for _, p in ipairs(r.__stPts) do r:SetPoint(unpack(p, 1, 5)) end
@@ -358,9 +415,15 @@ local function RestoreText(c)
   end
 end
 
--- false if Blizzard reset the shifted label's points or a faded text's alpha
-local function TextIntact(c)
-  for _, r in ipairs({ c:GetRegions() }) do
+local function RestoreText(c)
+  if not c.__stTextEdited then return end
+  c.__stTextEdited = nil
+  RestoreTextRegions(c:GetRegions())
+end
+
+local function TextIntactRegions(...)
+  for i = 1, select("#", ...) do
+    local r = select(i, ...)
     if r.__stEdit and r:GetObjectType() == "FontString" then
       if r.__stPts then
         local p = r.__stPts[1]
@@ -374,33 +437,52 @@ local function TextIntact(c)
   return true
 end
 
+-- false if Blizzard reset the shifted label's points or a faded text's alpha
+local function TextIntact(c)
+  return TextIntactRegions(c:GetRegions())
+end
+
+local function DropStaleEditRegions(...)
+  for i = 1, select("#", ...) do
+    local r = select(i, ...)
+    if r.__stEdit then
+      if r.__stAlpha then r:SetAlpha(r.__stAlpha) end
+      r.__stEdit, r.__stPts, r.__stAlpha = nil, nil, nil
+    end
+  end
+end
+
+local editFS = {}
+local function CollectVisibleFS(...)
+  wipe(editFS)
+  local label, lx = nil, nil
+  for i = 1, select("#", ...) do
+    local r = select(i, ...)
+    if r:GetObjectType() == "FontString" and r:IsShown() then
+      editFS[#editFS + 1] = r
+      local x = r:GetLeft()
+      if x and (not lx or x < lx) then label, lx = r, x end
+    end
+  end
+  return label
+end
+
 local function EditText(c, isStat)
   if c.__stTextEdited == "stat" and not TextIntact(c) then
     -- Blizzard put the label back itself: drop the stale state, keep its points
-    for _, r in ipairs({ c:GetRegions() }) do
-      if r.__stEdit then
-        if r.__stAlpha then r:SetAlpha(r.__stAlpha) end
-        r.__stEdit, r.__stPts, r.__stAlpha = nil, nil, nil
-      end
-    end
+    DropStaleEditRegions(c:GetRegions())
     c.__stTextEdited = nil
   end
   if c.__stTextEdited == (isStat and "stat" or "head") then return end
   RestoreText(c)
   if not isStat then c.__stTextEdited = "head"; return end
-  local fss, label, lx = {}, nil, nil
-  for _, r in ipairs({ c:GetRegions() }) do
-    if r:GetObjectType() == "FontString" and r:IsShown() then
-      fss[#fss + 1] = r
-      local x = r:GetLeft()
-      if x and (not lx or x < lx) then label, lx = r, x end
-    end
-  end
-  for _, r in ipairs(fss) do
+  local label = CollectVisibleFS(c:GetRegions())
+  for i = 1, #editFS do
+    local r = editFS[i]
     r.__stEdit = true
     if r == label then
       local pts = {}
-      for i = 1, r:GetNumPoints() do pts[i] = { r:GetPoint(i) } end
+      for j = 1, r:GetNumPoints() do pts[j] = { r:GetPoint(j) } end
       r.__stPts = pts
       r:ClearAllPoints()
       for _, p in ipairs(pts) do
@@ -416,155 +498,77 @@ end
 
 local function HideControls(c)
   local t = c.__stCtl
-  if t then t.cb:Hide(); t.name:Hide(); t.up:Hide(); t.down:Hide() end
-  HideRowCB(c)
+  if t then
+    t.cb:Hide(); t.name:Hide(); t.up:Hide(); t.down:Hide()
+  else
+    HideRowCB(c)
+  end
   RestoreText(c)
 end
 
-local function Rank(list, v, fallback)
-  if list then for i, x in ipairs(list) do if x == v then return i end end end
-  return 1000 + fallback
+-- Hoisted sort helpers + O(1) rank maps
+local function SortByOff(a, b) return a.off < b.off end
+
+local sortCatRank, sortCatPos
+local function SortCats(a, b)
+  local ra = (sortCatRank and sortCatRank[a]) or (1000 + sortCatPos[a])
+  local rb = (sortCatRank and sortCatRank[b]) or (1000 + sortCatPos[b])
+  if ra ~= rb then return ra < rb end
+  return sortCatPos[a] < sortCatPos[b]
+end
+
+local sortStatRank
+local function SortStats(a, b)
+  local ra = (sortStatRank and (sortStatRank[a.okey] or (a.okey ~= a.label and sortStatRank[a.label]))) or (1000 + a.pos)
+  local rb = (sortStatRank and (sortStatRank[b.okey] or (b.okey ~= b.label and sortStatRank[b.label]))) or (1000 + b.pos)
+  if ra ~= rb then return ra < rb end
+  return a.pos < b.pos
+end
+
+local rankMapScratch = {}
+local function BuildRankMap(list)
+  if not list then return nil end
+  wipe(rankMapScratch)
+  for i = 1, #list do
+    if rankMapScratch[list[i]] == nil then rankMapScratch[list[i]] = i end
+  end
+  return rankMapScratch
 end
 
 local touched = false -- rows were moved, faded or got controls since the last RestoreAll
 
-local function RestoreAll()
-  if not (touched or tall) then return end
-  touched = false
-  for _, c in ipairs({ container:GetChildren() }) do
+local function RestoreChildren(...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
     if not c:IsForbidden() then
       Restore(c)
       HideControls(c)
       SetVisual(c, "show")
     end
   end
+end
+
+local function HideChildrenControls(...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if not c:IsForbidden() then HideControls(c) end
+  end
+end
+
+local function RestoreAll()
+  if not (touched or tall) then return end
+  touched = false
+  wipe(lastFinal)
+  if container then RestoreChildren(container:GetChildren()) end
   RestoreSB()
 end
 
-local function DoRelayout()
-  if not Active() then
-    RestoreAll()
-    return
-  end
-  if not MakeTall() then return end
-  touched = true
-
-  -- Collect rows; recapture positions Blizzard has (re)set
-  local items = {}
-  for _, c in ipairs({ container:GetChildren() }) do
-    if not c:IsForbidden() and c:IsShown() then
-      c.__stSeen = true
-      local isStat, label = RowInfo(c)
-      if label then
-        if c.__stSet and not IsOurs(c) then c.__stSet = nil; c.__stOrig = nil end
-        if c.__stOrig or Capture(c) then
-          items[#items + 1] = { f = c, stat = isStat, label = label, off = c.__stOrig.off, h = c.__stOrig.h }
-        end
-      end
-    end
-  end
-  table.sort(items, function(a, b) return a.off < b.off end)
-
-  local cat
-  for _, it in ipairs(items) do
-    if not it.stat then cat = it.label end
-    it.cat = cat
-  end
-  if Remember(items) and opt and opt:IsShown() then RefreshOptions() end
-
-  -- Blocks per category
-  local pre, blocks, cats = {}, {}, {}
-  for _, it in ipairs(items) do
-    if not it.cat then
-      pre[#pre + 1] = it
-    elseif not it.stat then
-      if not blocks[it.cat] then cats[#cats + 1] = it.cat end
-      blocks[it.cat] = { header = it, stats = {} }
-    elseif blocks[it.cat] then
-      tinsert(blocks[it.cat].stats, it)
-    end
-  end
-
-  -- Category order
-  local catPos = {}
-  for i, c in ipairs(cats) do catPos[c] = i end
-  table.sort(cats, function(a, b)
-    local ra, rb = Rank(db.order.cats, a, catPos[a]), Rank(db.order.cats, b, catPos[b])
-    if ra ~= rb then return ra < rb end
-    return catPos[a] < catPos[b]
-  end)
-  curCats = cats
-
-  -- Groups: a category whose name is hidden merges its stats into the group above
-  local groups = {}
-  for _, c in ipairs(cats) do
-    local b = blocks[c]
-    if db.hidden[c .. "##name"] and #groups > 0 then
-      local g = groups[#groups]
-      for _, it in ipairs(b.stats) do g.stats[#g.stats + 1] = it end
-      g.extra[#g.extra + 1] = b.header
-    else
-      local st = {}
-      for i, it in ipairs(b.stats) do st[i] = it end
-      groups[#groups + 1] = { cat = c, header = b.header, stats = st, extra = {} }
-    end
-  end
-
-  -- Stat order within each group
-  curStats = {}
-  for _, g in ipairs(groups) do
-    local order = db.order.stats[g.cat]
-    -- merged stats are keyed with their own category, so equal labels stay apart
-    for p, it in ipairs(g.stats) do
-      it.pos = p; it.host = g.cat
-      it.okey = (it.cat == g.cat) and it.label or Key(it.cat, it.label)
-    end
-    local function SRank(it)
-      local r = Rank(order, it.okey, it.pos)
-      if r > 1000 and it.okey ~= it.label then r = Rank(order, it.label, it.pos) end
-      return r
-    end
-    table.sort(g.stats, function(a, b)
-      local ra, rb = SRank(a), SRank(b)
-      if ra ~= rb then return ra < rb end
-      return a.pos < b.pos
-    end)
-    local labels = {}
-    for i, it in ipairs(g.stats) do labels[i] = it.okey end
-    curStats[g.cat] = labels
-  end
-
-  -- Visibility
-  for _, g in ipairs(groups) do
-    local allOff = #g.stats > 0
-    for _, it in ipairs(g.stats) do
-      it.hide = db.hidden[it.cat] or db.hidden[Key(it.cat, it.label)]
-      if not it.hide then allOff = false end
-    end
-    g.header.hide = db.hidden[g.cat] or db.hidden[g.cat .. "##name"] or allOff
-    for _, h in ipairs(g.extra) do h.hide = true end
-  end
-
-  local final = {}
-  for _, it in ipairs(pre) do final[#final + 1] = it end
-  for _, g in ipairs(groups) do
-    final[#final + 1] = g.header
-    for _, it in ipairs(g.stats) do final[#final + 1] = it end
-    for _, h in ipairs(g.extra) do final[#final + 1] = h end
-  end
-
-  -- Total height of shown rows -> scroll range
-  local total = 0
-  for _, it in ipairs(final) do
-    if editMode or not it.hide then total = total + it.h end
-  end
-  maxScroll = math.max(0, total - (viewH or total))
-  if scroll > maxScroll then scroll = maxScroll end
-  if scroll < 0 then scroll = 0 end
-
-  -- Place rows
+-- Reposition and apply visibility/controls for the ordered `lastFinal` rows.
+-- Used both at the end of DoRelayout() and directly on mouse-wheel scrolling.
+local function PositionRows()
   local cursor = 0
-  for _, it in ipairs(final) do
+  for i = 1, #lastFinal do
+    local it = lastFinal[i]
     local c = it.f
     if not editMode and it.hide then
       HideControls(c)
@@ -608,6 +612,138 @@ local function DoRelayout()
   end
 end
 
+local function CollectRows(items, ...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if not c:IsForbidden() and c:IsShown() then
+      c.__stSeen = true
+      local isStat, label = RowInfo(c)
+      if label then
+        if c.__stSet and not IsOurs(c) then c.__stSet = nil; c.__stOrig = nil end
+        if c.__stOrig or Capture(c) then
+          -- Always read current height so ScrollBox recycling of row #1 never uses a stale height.
+          local h = c:GetHeight()
+          items[#items + 1] = { f = c, stat = isStat, label = label, off = c.__stOrig.off, h = h > 0 and h or c.__stOrig.h }
+        end
+      end
+    end
+  end
+end
+
+local function DoRelayout()
+  if not Active() then
+    pendingRelayout = false
+    RestoreAll()
+    return
+  end
+  if not MakeTall() then return end
+  pendingRelayout = false
+  touched = true
+
+  -- Collect rows; recapture positions Blizzard has (re)set
+  local items = {}
+  CollectRows(items, container:GetChildren())
+  table.sort(items, SortByOff)
+
+  local cat
+  for i = 1, #items do
+    local it = items[i]
+    if not it.stat then cat = it.label end
+    it.cat = cat
+  end
+  if Remember(items) and opt and opt:IsShown() then RefreshOptions() end
+
+  -- Blocks per category
+  local pre, blocks, cats = {}, {}, {}
+  for i = 1, #items do
+    local it = items[i]
+    if not it.cat then
+      pre[#pre + 1] = it
+    elseif not it.stat then
+      if not blocks[it.cat] then cats[#cats + 1] = it.cat end
+      blocks[it.cat] = { header = it, stats = {} }
+    elseif blocks[it.cat] then
+      tinsert(blocks[it.cat].stats, it)
+    end
+  end
+
+  -- Category order
+  local catPos = {}
+  for i = 1, #cats do catPos[cats[i]] = i end
+  sortCatRank = BuildRankMap(db.order.cats)
+  sortCatPos = catPos
+  table.sort(cats, SortCats)
+  curCats = cats
+
+  -- Groups: a category whose name is hidden merges its stats into the group above
+  local groups = {}
+  for i = 1, #cats do
+    local c = cats[i]
+    local b = blocks[c]
+    if db.hidden[c .. "##name"] and #groups > 0 then
+      local g = groups[#groups]
+      for j = 1, #b.stats do g.stats[#g.stats + 1] = b.stats[j] end
+      g.extra[#g.extra + 1] = b.header
+    else
+      local st = {}
+      for j = 1, #b.stats do st[j] = b.stats[j] end
+      groups[#groups + 1] = { cat = c, header = b.header, stats = st, extra = {} }
+    end
+  end
+
+  -- Stat order within each group
+  curStats = {}
+  for gi = 1, #groups do
+    local g = groups[gi]
+    local order = db.order.stats[g.cat]
+    -- merged stats are keyed with their own category, so equal labels stay apart
+    for p = 1, #g.stats do
+      local it = g.stats[p]
+      it.pos = p; it.host = g.cat
+      it.okey = (it.cat == g.cat) and it.label or Key(it.cat, it.label)
+    end
+    sortStatRank = BuildRankMap(order)
+    table.sort(g.stats, SortStats)
+    local labels = {}
+    for p = 1, #g.stats do labels[p] = g.stats[p].okey end
+    curStats[g.cat] = labels
+  end
+
+  -- Visibility
+  for gi = 1, #groups do
+    local g = groups[gi]
+    local allOff = #g.stats > 0
+    for p = 1, #g.stats do
+      local it = g.stats[p]
+      it.hide = db.hidden[it.cat] or db.hidden[Key(it.cat, it.label)]
+      if not it.hide then allOff = false end
+    end
+    g.header.hide = db.hidden[g.cat] or db.hidden[g.cat .. "##name"] or allOff
+    for p = 1, #g.extra do g.extra[p].hide = true end
+  end
+
+  wipe(lastFinal)
+  for i = 1, #pre do lastFinal[#lastFinal + 1] = pre[i] end
+  for gi = 1, #groups do
+    local g = groups[gi]
+    lastFinal[#lastFinal + 1] = g.header
+    for p = 1, #g.stats do lastFinal[#lastFinal + 1] = g.stats[p] end
+    for p = 1, #g.extra do lastFinal[#lastFinal + 1] = g.extra[p] end
+  end
+
+  -- Total height of shown rows -> scroll range
+  local total = 0
+  for i = 1, #lastFinal do
+    local it = lastFinal[i]
+    if editMode or not it.hide then total = total + it.h end
+  end
+  maxScroll = math.max(0, total - (viewH or total))
+  if scroll > maxScroll then scroll = maxScroll end
+  if scroll < 0 then scroll = 0 end
+
+  PositionRows()
+end
+
 -- An error must not leave the guard set: StatTrim would stop working until a /reload.
 function Relayout()
   if relayouting or not (container and sb) then return end
@@ -617,15 +753,20 @@ function Relayout()
   if not ok then geterrorhandler()(err) end
 end
 
--- Has Blizzard changed the panel since the last layout? New rows, or rows it moved back.
-local function Stale()
-  for _, c in ipairs({ container:GetChildren() }) do
+local function StaleChildren(...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
     if not c:IsForbidden() and c:IsShown() then
       if not c.__stSeen then return true end
       if c.__stSet and not IsOurs(c) then return true end
     end
   end
   return false
+end
+
+-- Has Blizzard changed the panel since the last layout? New rows, or rows it moved back.
+local function Stale()
+  return StaleChildren(container:GetChildren())
 end
 
 local hookedSB
@@ -636,8 +777,17 @@ local function HookSB()
   if sb.Update then hooksecurefunc(sb, "Update", function() Relayout() end) end
   sb:HookScript("OnMouseWheel", function(_, delta)
     if not tall then return end
-    scroll = math.min(maxScroll, math.max(0, scroll - delta * WHEEL_STEP))
-    Relayout()
+    local nextScroll = math.min(maxScroll, math.max(0, scroll - delta * WHEEL_STEP))
+    if nextScroll == scroll then return end
+    scroll = nextScroll
+    if #lastFinal > 0 and not Stale() then
+      relayouting = true
+      local ok, err = pcall(PositionRows)
+      relayouting = false
+      if not ok then geterrorhandler()(err) end
+    else
+      Relayout()
+    end
   end)
 end
 
@@ -646,8 +796,17 @@ local warned
 -- when Blizzard changed the panel. Every other caller (clicks, settings) always does.
 function Apply(fromPoll)
   if not (CharacterFrame and CharacterFrame:IsVisible()) then return end
-  if fromPoll and container and container:IsVisible() and sb == container:GetParent() then
-    if not ((tall or Active()) and Stale()) then return end
+  if fromPoll then
+    -- If we already found the stats container and it is hidden (another CharacterFrame tab
+    -- is active), do not rescan CharacterFrame and risk hijacking Reputation/Currency ScrollBoxes.
+    if container and not container:IsVisible() then return end
+    if InCombatLockdown() and not tall then
+      if Active() then pendingRelayout = true end
+      return
+    end
+    if container and container:IsVisible() and sb == container:GetParent() then
+      if not ((tall or Active()) and Stale()) then return end
+    end
   end
   if not (container and container:IsVisible()) then container = FindContainer() end
   if not container then return end
@@ -673,6 +832,7 @@ local BUG_URL = "https://github.com/Bencepo/StatTrim/issues/new/choose"
 local ACCENT = { 0.40, 0.80, 1, 1 }
 local OPT_W, OPT_H = 340, 460
 local WHITE = "Interface\\Buttons\\WHITE8X8"
+local CHECK_BACKDROP = { bgFile = WHITE, edgeFile = WHITE, edgeSize = 1 }
 
 -- A flat checkbox in the window's colours, with its label; the whole line is clickable.
 local function GetCheck(i)
@@ -681,7 +841,7 @@ local function GetCheck(i)
     local T = opt.T
     cb = CreateFrame("Button", nil, opt.content, "BackdropTemplate")
     cb:SetSize(16, 16)
-    cb:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = 1 })
+    cb:SetBackdrop(CHECK_BACKDROP)
     cb:SetBackdropColor(T.well[1], T.well[2], T.well[3], T.well[4] or 1)
     cb:SetBackdropBorderColor(T.line[1], T.line[2], T.line[3], 1)
     cb.mark = cb:CreateTexture(nil, "OVERLAY")
@@ -719,7 +879,7 @@ function RefreshOptions()
     cb:SetChecked(not db.hidden[cat]); cb:Enable(); cb:SetAlpha(1)
     cb.label:SetFontObject("GameFontNormal"); cb.label:SetText(cat)
     y = y + 24
-    for _, stat in ipairs(db.known.stats[cat] or {}) do
+    for _, stat in ipairs(db.known.stats[cat] or EMPTY) do
       i = i + 1
       local scb = GetCheck(i)
       scb:ClearAllPoints(); scb:SetPoint("TOPLEFT", 22, -y)
@@ -759,7 +919,7 @@ local function BuildOptions()
     "Every category and stat visible again.")
   showAll:SetPoint("TOPLEFT", 16, y)
   local rescan = opt:Button("Rescan list", 90, function()
-    db.known = { cats = {}, stats = {} }; container = nil; Apply(); RefreshOptions()
+    db.known = { cats = {}, stats = {} }; wipe(knownSets); container = nil; Apply(); RefreshOptions()
   end, "Forgets the list and reads the stats panel again, e.g. after the game added a stat.")
   rescan:SetPoint("LEFT", showAll, "RIGHT", 6, 0)
   local order = opt:Button("Default order", 110, function() db.order = { cats = nil, stats = {} }; Apply() end,
@@ -768,6 +928,7 @@ local function BuildOptions()
 end
 
 function ToggleOptions()
+  if not db then return end
   if not opt then BuildOptions() end
   if opt:IsShown() then opt:Hide() else RefreshOptions(); opt:Show() end
 end
@@ -810,8 +971,9 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("PLAYER_REGEN_ENABLED")
-ev:SetScript("OnEvent", function(_, event, arg)
+ev:SetScript("OnEvent", function(self, event, arg)
   if event == "ADDON_LOADED" and arg == ADDON then
+    self:UnregisterEvent("ADDON_LOADED")
     StatTrimDB = StatTrimDB or {}
     db = StatTrimDB
     db.hidden = db.hidden or {}
@@ -825,17 +987,36 @@ ev:SetScript("OnEvent", function(_, event, arg)
       for i = #db.known.cats, 1, -1 do if db.known.cats[i] == old then tremove(db.known.cats, i) end end
     end
   elseif event == "PLAYER_REGEN_ENABLED" then
-    -- RestoreSB() waits out combat; finish it now if StatTrim has nothing left to do
-    if tall and db and not Active() then RestoreSB() end
+    if not db then return end
+    -- Finish deferred restore or relayout once combat ends.
+    if tall and not Active() then
+      RestoreAll()
+    elseif pendingRelayout then
+      pendingRelayout = false
+      if CharacterFrame and CharacterFrame:IsVisible() then Apply() end
+    end
   elseif event == "PLAYER_LOGIN" then
+    self:UnregisterEvent("PLAYER_LOGIN")
     if not CharacterFrame then
       print("|cff66ccffStatTrim|r CharacterFrame not found – addon inactive.")
       return
     end
-    local driver = CreateFrame("Frame", nil, CharacterFrame)
+    local driverParent = CharacterStatsPane or PaperDollFrame or CharacterFrame
+    local driver = CreateFrame("Frame", nil, driverParent)
     local acc = 0
     driver:SetScript("OnShow", function() acc = 0; Apply() end)
-    driver:SetScript("OnHide", function() editMode = false end)
+    driver:SetScript("OnHide", function()
+      local wasEdit = editMode
+      editMode = false
+      if editBtn then editBtn:UnlockHighlight() end
+      if wasEdit and db then
+        if not Active() then
+          RestoreAll()
+        elseif container then
+          HideChildrenControls(container:GetChildren())
+        end
+      end
+    end)
     driver:SetScript("OnUpdate", function(_, dt)
       acc = acc + dt
       if acc >= 0.1 then acc = 0; Apply(true) end
@@ -855,6 +1036,10 @@ SlashCmdList.STATTRIM = function(msg)
   elseif msg == "order" then
     db.order = { cats = nil, stats = {} }; Apply()
   else
+    if not editMode and not tall and InCombatLockdown() then
+      print("|cff66ccffStatTrim|r Edit mode can only be entered out of combat.")
+      return
+    end
     editMode = not editMode; Apply()
     if not (CharacterFrame and CharacterFrame:IsVisible()) then
       print("|cff66ccffStatTrim|r Edit mode applies once the character window is open.")

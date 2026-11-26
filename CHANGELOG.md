@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Fixed: switching tabs in the character window (Reputation, Currency, Pet) no longer triggers continuous frame scans or mistakes another tab's list for the stats panel.
+- Hidden categories/stats and custom stat order are now saved per character (`StatTrimCharDB`), so melee and caster characters keep their own setup. Existing settings from `StatTrimDB` are migrated once automatically.
+- Fixed: switching tabs in the character window (Reputation, Currency, Pet) no longer triggers continuous frame scans or mistakes another tab's list for the stats panel, and the gear icon hides on other tabs.
 - Fixed: closing the character window in edit mode now cleans up row controls and restores the ScrollBox when nothing is hidden or reordered; changes made in combat apply automatically once combat ends; row height stays accurate when the ScrollBox recycles rows.
 - Much smoother scrolling and lower memory churn: mouse-wheel scrolling repositions cached rows directly instead of rescanning and re-sorting all stats, with O(1) rank lookups and fewer temporary tables.
 - Shared settings window updated to BencepoUI 5.

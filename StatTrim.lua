@@ -3,10 +3,29 @@
 -- Normal mode: unchecked rows are removed, the rest move up.
 
 local ADDON = ...
-local db, container, opt, editBtn
+local accDB, db, container, opt, editBtn
 local editMode = false
 local RefreshOptions, ToggleOptions
 local EMPTY = {}
+
+-- Non-stats tab frames inside CharacterFrame that must never be mistaken for the stats panel.
+local OTHER_TABS = { "ReputationFrame", "TokenFrame", "SkillFrame", "HonorFrame", "PetPaperDollFrame", "CurrencyFrame" }
+
+local function IsOtherTabFrame(f)
+  for i = 1, #OTHER_TABS do
+    local t = _G[OTHER_TABS[i]]
+    if t and f == t then return true end
+  end
+  return false
+end
+
+local function IsOtherTabOpen()
+  for i = 1, #OTHER_TABS do
+    local t = _G[OTHER_TABS[i]]
+    if t and t.IsVisible and t:IsVisible() then return true end
+  end
+  return false
+end
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -54,7 +73,7 @@ end
 local function WalkChildren(depth, cb, ...)
   for i = 1, select("#", ...) do
     local c = select(i, ...)
-    if not c:IsForbidden() then
+    if not c:IsForbidden() and not IsOtherTabFrame(c) then
       cb(c)
       if depth > 0 then WalkChildren(depth - 1, cb, c:GetChildren()) end
     end
@@ -62,29 +81,28 @@ local function WalkChildren(depth, cb, ...)
 end
 
 local function Walk(f, depth, cb)
-  if not f or f:IsForbidden() then return end
+  if not f or f:IsForbidden() or IsOtherTabFrame(f) then return end
   cb(f)
   if depth <= 0 then return end
   WalkChildren(depth - 1, cb, f:GetChildren())
 end
 
--- Restrict discovery to the stats pane / PaperDollFrame so switching CharacterFrame tabs
--- (Reputation, Currency, Pet) can never hijack another tab's ScrollBox.
 local function FindContainer()
-  local root = (CharacterStatsPane and CharacterStatsPane:IsVisible() and CharacterStatsPane)
-    or (PaperDollFrame and PaperDollFrame:IsVisible() and PaperDollFrame)
-  if not root then
-    -- Fallback only if PaperDollFrame does not exist on this client layout.
-    if PaperDollFrame or not (CharacterFrame and CharacterFrame:IsVisible()) then return nil end
-    root = CharacterFrame
-  end
-  local best, bestN = nil, 0
-  Walk(root, 10, function(f)
+  if not (CharacterFrame and CharacterFrame:IsVisible()) then return nil end
+  if IsOtherTabOpen() then return nil end
+  local best, bestN, bestHasDP = nil, 0, false
+  Walk(CharacterFrame, 10, function(f)
     if not f:IsVisible() then return end
     local n = CountRowChildren(f:GetChildren())
-    if n > bestN then best, bestN = f, n end
+    if n >= 5 then
+      local p = f:GetParent()
+      local hasDP = (p and p.GetDataProvider ~= nil) and true or false
+      if (hasDP and not bestHasDP) or (hasDP == bestHasDP and n > bestN) then
+        best, bestN, bestHasDP = f, n, hasDP
+      end
+    end
   end)
-  if bestN >= 5 then return best end
+  return best
 end
 
 local function Key(cat, stat) return stat and (cat .. "::" .. stat) or cat end
@@ -796,20 +814,24 @@ local warned
 -- when Blizzard changed the panel. Every other caller (clicks, settings) always does.
 function Apply(fromPoll)
   if not (CharacterFrame and CharacterFrame:IsVisible()) then return end
+  if container and not container:IsVisible() then
+    if editBtn then editBtn:Hide() end
+    return
+  end
   if fromPoll then
-    -- If we already found the stats container and it is hidden (another CharacterFrame tab
-    -- is active), do not rescan CharacterFrame and risk hijacking Reputation/Currency ScrollBoxes.
-    if container and not container:IsVisible() then return end
     if InCombatLockdown() and not tall then
       if Active() then pendingRelayout = true end
       return
     end
     if container and container:IsVisible() and sb == container:GetParent() then
+      if editBtn and not editBtn:IsShown() then editBtn:Show() end
       if not ((tall or Active()) and Stale()) then return end
     end
   end
-  if not (container and container:IsVisible()) then container = FindContainer() end
-  if not container then return end
+  if not container then
+    container = FindContainer()
+  end
+  if not (container and container:IsVisible()) then return end
   local parent = container:GetParent()
   if not (parent and parent.GetDataProvider) then
     if not warned then
@@ -899,7 +921,7 @@ local function BuildOptions()
   local UI = LibStub("BencepoUI-1.0")
   opt = UI:CreateWindow({
     name = "StatTrimOptions", title = "StatTrim", subtitle = "checked = visible",
-    width = OPT_W, height = OPT_H, accent = ACCENT, db = db, posKey = "optPos", bugUrl = BUG_URL,
+    width = OPT_W, height = OPT_H, accent = ACCENT, db = accDB, posKey = "optPos", bugUrl = BUG_URL,
     hint = "drag to move",
   })
   local sf = CreateFrame("ScrollFrame", nil, opt, "UIPanelScrollFrameTemplate")
@@ -975,9 +997,20 @@ ev:SetScript("OnEvent", function(self, event, arg)
   if event == "ADDON_LOADED" and arg == ADDON then
     self:UnregisterEvent("ADDON_LOADED")
     StatTrimDB = StatTrimDB or {}
-    db = StatTrimDB
+    accDB = StatTrimDB
+    StatTrimCharDB = StatTrimCharDB or {}
+    db = StatTrimCharDB
+    -- One-time migration from account-wide StatTrimDB to per-character StatTrimCharDB.
+    if not accDB.migrated and db.hidden == nil and (accDB.hidden or accDB.order or accDB.known) then
+      if type(accDB.hidden) == "table" then db.hidden = CopyTable(accDB.hidden) end
+      if type(accDB.known) == "table" then db.known = CopyTable(accDB.known) end
+      if type(accDB.order) == "table" then db.order = CopyTable(accDB.order) end
+      accDB.migrated = true
+    end
     db.hidden = db.hidden or {}
     db.known = db.known or { cats = {}, stats = {} }
+    db.known.cats = db.known.cats or {}
+    db.known.stats = db.known.stats or {}
     db.order = db.order or { cats = nil, stats = {} }
     db.order.stats = db.order.stats or {}
     -- Remove leftover from v0.1
@@ -1001,8 +1034,7 @@ ev:SetScript("OnEvent", function(self, event, arg)
       print("|cff66ccffStatTrim|r CharacterFrame not found – addon inactive.")
       return
     end
-    local driverParent = CharacterStatsPane or PaperDollFrame or CharacterFrame
-    local driver = CreateFrame("Frame", nil, driverParent)
+    local driver = CreateFrame("Frame", nil, CharacterFrame)
     local acc = 0
     driver:SetScript("OnShow", function() acc = 0; Apply() end)
     driver:SetScript("OnHide", function()

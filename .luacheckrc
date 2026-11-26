@@ -9,6 +9,7 @@ ignore = { "113", "212/self" }
 
 globals = {
 	"StatTrimDB",
+	"StatTrimCharDB",
 	"SLASH_STATTRIM1",
 	"SLASH_STATTRIM2",
 	"SlashCmdList",

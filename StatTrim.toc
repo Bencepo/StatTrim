@@ -8,6 +8,7 @@
 ## X-Curse-Project-ID: 1801407
 ## X-Wago-ID: jK8Wye6y
 ## SavedVariables: StatTrimDB
+## SavedVariablesPerCharacter: StatTrimCharDB
 ## IconTexture: Interface\AddOns\StatTrim\Icons\minimap
 ## AddonCompartmentFunc: StatTrim_OnCompartmentClick
 

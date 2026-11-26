@@ -10,9 +10,7 @@
   ],
   "diagnostics.globals": [
     "CharacterFrame",
-    "CharacterStatsPane",
     "GameTooltip_Hide",
-    "PaperDollFrame",
     "SlashCmdList",
     "UISpecialFrames",
     "issecretvalue"

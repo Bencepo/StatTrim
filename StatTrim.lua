@@ -3,6 +3,11 @@
 -- Normal mode: unchecked rows are removed, the rest move up.
 
 local ADDON = ...
+local ipairs, next, type, tostring, select, unpack, pcall, wipe = ipairs, next, type, tostring, select, unpack, pcall, wipe
+local abs, max, min = math.abs, math.max, math.min
+local tsort, tinsert, tremove = table.sort, tinsert, tremove
+local format = string.format
+local PREFIX = "|cff66ccffStatTrim|r"
 local accDB, db, container, opt, editBtn
 local editMode = false
 local RefreshOptions, ToggleOptions
@@ -134,7 +139,7 @@ local function IsOurs(c)
   local pt, rel, _, x, y = c:GetPoint(1)
   x, y = Pub(x), Pub(y)
   return pt == "TOPLEFT" and rel == container
-    and math.abs((x or 0) - s.x) < 0.01 and math.abs((y or 0) - s.y) < 0.01
+    and abs((x or 0) - s.x) < 0.01 and abs((y or 0) - s.y) < 0.01
 end
 
 local function Restore(c)
@@ -228,6 +233,16 @@ end
 
 local tall -- forward declaration for editBtn combat guard
 
+local function ToggleEditMode()
+  if not editMode and not tall and InCombatLockdown() then
+    print(PREFIX .. " Edit mode can only be entered out of combat.")
+    return false
+  end
+  editMode = not editMode
+  Apply()
+  return true
+end
+
 local function UpdateEditButton()
   if not container then return end
   if not editBtn then
@@ -240,12 +255,7 @@ local function UpdateEditButton()
     editBtn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     editBtn:SetScript("OnClick", function(_, button)
       if button == "RightButton" then ToggleOptions() return end
-      if not editMode and not tall and InCombatLockdown() then
-        print("|cff66ccffStatTrim|r Edit mode can only be entered out of combat.")
-        return
-      end
-      editMode = not editMode
-      Apply()
+      ToggleEditMode()
     end)
     editBtn:SetScript("OnEnter", function(self)
       GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -310,6 +320,19 @@ local function Reanchor(obj, isOwnRegion)
   end
 end
 
+local function ReanchorChildren(...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
+    if c ~= sb and c ~= proxy and c ~= editBtn and not c:IsForbidden() then Reanchor(c, false) end
+  end
+end
+
+local function ReanchorRegions(...)
+  for i = 1, select("#", ...) do
+    Reanchor(select(i, ...), true)
+  end
+end
+
 local function MakeTall()
   if tall then return true end
   if InCombatLockdown() then
@@ -330,10 +353,8 @@ local function MakeTall()
   if #pts < 2 then proxy:SetSize(sbOrig.w, viewH) end
 
   wipe(moved)
-  for _, c in ipairs({ parent:GetChildren() }) do
-    if c ~= sb and c ~= proxy and c ~= editBtn and not c:IsForbidden() then Reanchor(c, false) end
-  end
-  for _, r in ipairs({ sb:GetRegions() }) do Reanchor(r, true) end
+  ReanchorChildren(parent:GetChildren())
+  ReanchorRegions(sb:GetRegions())
 
   sb:ClearAllPoints()
   sb:SetPoint("TOPLEFT", parent, "TOPLEFT", l - pl, t - pt)
@@ -640,7 +661,11 @@ local function PositionRows()
   end
 end
 
-local function CollectRows(items, ...)
+local relayoutItems, itemPool = {}, {}
+local preBuf, catPosBuf = {}, {}
+
+local function CollectRows(...)
+  local n = #relayoutItems
   for i = 1, select("#", ...) do
     local c = select(i, ...)
     if not c:IsForbidden() and c:IsShown() then
@@ -651,7 +676,16 @@ local function CollectRows(items, ...)
         if c.__stOrig or Capture(c) then
           -- Always read current height so ScrollBox recycling of row #1 never uses a stale height.
           local h = Pub(c:GetHeight()) or 0
-          items[#items + 1] = { f = c, stat = isStat, label = label, off = c.__stOrig.off, h = h > 0 and h or c.__stOrig.h }
+          n = n + 1
+          local it = itemPool[n]
+          if not it then
+            it = {}
+            itemPool[n] = it
+          end
+          it.f, it.stat, it.label = c, isStat, label
+          it.off, it.h = c.__stOrig.off, h > 0 and h or c.__stOrig.h
+          it.cat, it.pos, it.host, it.okey, it.hide = nil, nil, nil, nil, nil
+          relayoutItems[n] = it
         end
       end
     end
@@ -667,11 +701,13 @@ local function DoRelayout()
   if not MakeTall() then return end
   pendingRelayout = false
   touched = true
+  wipe(lastFinal)
 
   -- Collect rows; recapture positions Blizzard has (re)set
-  local items = {}
-  CollectRows(items, container:GetChildren())
-  table.sort(items, SortByOff)
+  wipe(relayoutItems)
+  CollectRows(container:GetChildren())
+  local items = relayoutItems
+  tsort(items, SortByOff)
 
   local cat
   for i = 1, #items do
@@ -682,7 +718,8 @@ local function DoRelayout()
   if Remember(items) and opt and opt:IsShown() then RefreshOptions() end
 
   -- Blocks per category
-  local pre, blocks, cats = {}, {}, {}
+  wipe(preBuf)
+  local pre, blocks, cats = preBuf, {}, {}
   for i = 1, #items do
     local it = items[i]
     if not it.cat then
@@ -696,11 +733,11 @@ local function DoRelayout()
   end
 
   -- Category order
-  local catPos = {}
-  for i = 1, #cats do catPos[cats[i]] = i end
+  wipe(catPosBuf)
+  for i = 1, #cats do catPosBuf[cats[i]] = i end
   sortCatRank = BuildRankMap(db.order.cats)
-  sortCatPos = catPos
-  table.sort(cats, SortCats)
+  sortCatPos = catPosBuf
+  tsort(cats, SortCats)
   curCats = cats
 
   -- Groups: a category whose name is hidden merges its stats into the group above
@@ -731,7 +768,7 @@ local function DoRelayout()
       it.okey = (it.cat == g.cat) and it.label or Key(it.cat, it.label)
     end
     sortStatRank = BuildRankMap(order)
-    table.sort(g.stats, SortStats)
+    tsort(g.stats, SortStats)
     local labels = {}
     for p = 1, #g.stats do labels[p] = g.stats[p].okey end
     curStats[g.cat] = labels
@@ -750,7 +787,6 @@ local function DoRelayout()
     for p = 1, #g.extra do g.extra[p].hide = true end
   end
 
-  wipe(lastFinal)
   for i = 1, #pre do lastFinal[#lastFinal + 1] = pre[i] end
   for gi = 1, #groups do
     local g = groups[gi]
@@ -765,7 +801,7 @@ local function DoRelayout()
     local it = lastFinal[i]
     if editMode or not it.hide then total = total + it.h end
   end
-  maxScroll = math.max(0, total - (viewH or total))
+  maxScroll = max(0, total - (viewH or total))
   if scroll > maxScroll then scroll = maxScroll end
   if scroll < 0 then scroll = 0 end
 
@@ -805,7 +841,7 @@ local function HookSB()
   if sb.Update then hooksecurefunc(sb, "Update", function() Relayout() end) end
   sb:HookScript("OnMouseWheel", function(_, delta)
     if not tall then return end
-    local nextScroll = math.min(maxScroll, math.max(0, scroll - delta * WHEEL_STEP))
+    local nextScroll = min(maxScroll, max(0, scroll - delta * WHEEL_STEP))
     if nextScroll == scroll then return end
     scroll = nextScroll
     if #lastFinal > 0 and not Stale() then
@@ -846,7 +882,7 @@ function Apply(fromPoll)
   if not (parent and parent.GetDataProvider) then
     if not warned then
       warned = true
-      print("|cff66ccffStatTrim|r Unsupported stats panel layout.")
+      print(PREFIX .. " Unsupported stats panel layout.")
     end
     return
   end
@@ -899,32 +935,56 @@ local function GetCheck(i)
   return cb
 end
 
+local function PlaceCheck(cb, x, y, isCat)
+  if cb.x ~= x or cb.y ~= y then
+    cb:ClearAllPoints()
+    cb:SetPoint("TOPLEFT", x, -y)
+    cb.x, cb.y = x, y
+  end
+  if cb.isCat ~= isCat then
+    cb.label:SetFontObject(isCat and "GameFontNormal" or "GameFontHighlightSmall")
+    cb.isCat = isCat
+  end
+end
+
 function RefreshOptions()
-  for _, cb in ipairs(opt.checks) do cb:Hide() end
   opt.empty:SetShown(#db.known.cats == 0)
   local i, y = 0, 2
   for _, cat in ipairs(db.known.cats) do
+    local catHidden = db.hidden[cat]
     i = i + 1
     local cb = GetCheck(i)
-    cb:ClearAllPoints(); cb:SetPoint("TOPLEFT", 2, -y)
+    PlaceCheck(cb, 2, y, true)
     cb.key = cat
-    cb:SetChecked(not db.hidden[cat]); cb:Enable(); cb:SetAlpha(1)
-    cb.label:SetFontObject("GameFontNormal"); cb.label:SetText(cat)
+    cb:SetChecked(not catHidden); cb:Enable(); cb:SetAlpha(1)
+    cb.label:SetText(cat)
     y = y + 24
     for _, stat in ipairs(db.known.stats[cat] or EMPTY) do
       i = i + 1
       local scb = GetCheck(i)
-      scb:ClearAllPoints(); scb:SetPoint("TOPLEFT", 22, -y)
+      PlaceCheck(scb, 22, y, false)
       scb.key = Key(cat, stat)
       scb:SetChecked(not db.hidden[scb.key])
-      scb.label:SetFontObject("GameFontHighlightSmall"); scb.label:SetText(stat)
+      scb.label:SetText(stat)
       -- a hidden category hides its stats too: their boxes are greyed out
-      if db.hidden[cat] then scb:Disable(); scb:SetAlpha(0.4) else scb:Enable(); scb:SetAlpha(1) end
+      if catHidden then scb:Disable(); scb:SetAlpha(0.4) else scb:Enable(); scb:SetAlpha(1) end
       y = y + 21
     end
     y = y + 6
   end
-  opt.content:SetHeight(math.max(y, 10))
+  for j = i + 1, #opt.checks do opt.checks[j]:Hide() end
+  opt.content:SetHeight(max(y, 10))
+end
+
+local function ResetHidden()
+  wipe(db.hidden)
+  Apply()
+  if opt and opt:IsShown() then RefreshOptions() end
+end
+
+local function ResetOrder()
+  db.order = { cats = nil, stats = {} }
+  Apply()
 end
 
 local function BuildOptions()
@@ -947,14 +1007,14 @@ local function BuildOptions()
   opt.empty:SetText("Nothing detected yet. Open the character window with the stats view once.")
 
   local y = -(OPT_H - 32)
-  local showAll = opt:Button("Show all", 90, function() wipe(db.hidden); Apply(); RefreshOptions() end,
+  local showAll = opt:Button("Show all", 90, ResetHidden,
     "Every category and stat visible again.")
   showAll:SetPoint("TOPLEFT", 16, y)
   local rescan = opt:Button("Rescan list", 90, function()
     db.known = { cats = {}, stats = {} }; wipe(knownSets); container = nil; Apply(); RefreshOptions()
   end, "Forgets the list and reads the stats panel again, e.g. after the game added a stat.")
   rescan:SetPoint("LEFT", showAll, "RIGHT", 6, 0)
-  local order = opt:Button("Default order", 110, function() db.order = { cats = nil, stats = {} }; Apply() end,
+  local order = opt:Button("Default order", 110, ResetOrder,
     "Puts categories and stats back in the game's own order. What is hidden stays hidden.")
   order:SetPoint("LEFT", rescan, "RIGHT", 6, 0)
 end
@@ -973,27 +1033,35 @@ end
 ---------------------------------------------------------------------------
 -- Debug
 ---------------------------------------------------------------------------
-local function Dump()
-  local p = function(...) print("|cff66ccffStatTrim|r", ...) end
-  if not (CharacterFrame and CharacterFrame:IsVisible()) then
-    p("Open the character window (stats view), then /stt dump."); return
-  end
-  container = FindContainer()
-  if not container then p("No stats panel found."); return end
-  p("Container:", container:GetDebugName(), container:GetObjectType(),
-    "Parent:", container:GetParent() and container:GetParent():GetDebugName())
-  p("Tall mode:", tall and "yes" or "no", "view height:", viewH and string.format("%.0f", viewH) or "-",
-    "scroll:", string.format("%.0f/%.0f", scroll, maxScroll))
-  for _, c in ipairs({ container:GetChildren() }) do
+local function Say(...)
+  print(PREFIX, ...)
+end
+
+local function DumpChildren(...)
+  for i = 1, select("#", ...) do
+    local c = select(i, ...)
     if not c:IsForbidden() and c:IsShown() then
       local isStat, label = RowInfo(c)
       if label then
         local pt, rel, rp, x, y = c:GetPoint(1)
-        p(isStat and "  W" or "H", label, "|", pt, rel and rel.GetDebugName and rel:GetDebugName() or tostring(rel), rp,
-          Pub(x) and string.format("%.1f", x), Pub(y) and string.format("%.1f", y), "h=" .. string.format("%.1f", Pub(c:GetHeight()) or -1))
+        Say(isStat and "  W" or "H", label, "|", pt, rel and rel.GetDebugName and rel:GetDebugName() or tostring(rel), rp,
+          Pub(x) and format("%.1f", x), Pub(y) and format("%.1f", y), "h=" .. format("%.1f", Pub(c:GetHeight()) or -1))
       end
     end
   end
+end
+
+local function Dump()
+  if not (CharacterFrame and CharacterFrame:IsVisible()) then
+    Say("Open the character window (stats view), then /stt dump."); return
+  end
+  container = FindContainer()
+  if not container then Say("No stats panel found."); return end
+  Say("Container:", container:GetDebugName(), container:GetObjectType(),
+    "Parent:", container:GetParent() and container:GetParent():GetDebugName())
+  Say("Tall mode:", tall and "yes" or "no", "view height:", viewH and format("%.0f", viewH) or "-",
+    "scroll:", format("%.0f/%.0f", scroll, maxScroll))
+  DumpChildren(container:GetChildren())
 end
 
 ---------------------------------------------------------------------------
@@ -1041,7 +1109,7 @@ ev:SetScript("OnEvent", function(self, event, arg)
   elseif event == "PLAYER_LOGIN" then
     self:UnregisterEvent("PLAYER_LOGIN")
     if not CharacterFrame then
-      print("|cff66ccffStatTrim|r CharacterFrame not found – addon inactive.")
+      print(PREFIX .. " CharacterFrame not found – addon inactive.")
       return
     end
     local driver = CreateFrame("Frame", nil, CharacterFrame)
@@ -1072,19 +1140,13 @@ SlashCmdList.STATTRIM = function(msg)
   if not db then return end
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if msg == "dump" then Dump()
-  elseif msg == "reset" then
-    wipe(db.hidden); Apply(); if opt and opt:IsShown() then RefreshOptions() end
+  elseif msg == "reset" then ResetHidden()
   elseif msg == "list" then ToggleOptions()
-  elseif msg == "order" then
-    db.order = { cats = nil, stats = {} }; Apply()
+  elseif msg == "order" then ResetOrder()
   else
-    if not editMode and not tall and InCombatLockdown() then
-      print("|cff66ccffStatTrim|r Edit mode can only be entered out of combat.")
-      return
-    end
-    editMode = not editMode; Apply()
+    if not ToggleEditMode() then return end
     if not (CharacterFrame and CharacterFrame:IsVisible()) then
-      print("|cff66ccffStatTrim|r Edit mode applies once the character window is open.")
+      print(PREFIX .. " Edit mode applies once the character window is open.")
     end
   end
 end

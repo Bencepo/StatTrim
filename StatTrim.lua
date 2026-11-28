@@ -8,7 +8,8 @@ local abs, max, min = math.abs, math.max, math.min
 local tsort, tinsert, tremove = table.sort, tinsert, tremove
 local format = string.format
 local PREFIX = "|cff66ccffStatTrim|r"
-local accDB, db, container, opt, editBtn
+local DEFAULTS = { showMinimap = true }
+local accDB, db, container, opt, editBtn, LDBIcon
 local editMode = false
 local RefreshOptions, ToggleOptions
 local EMPTY = {}
@@ -987,6 +988,12 @@ local function ResetOrder()
   Apply()
 end
 
+local function ApplyMinimap()
+  if not LDBIcon then return end
+  accDB.minimap.hide = not accDB.showMinimap
+  if accDB.showMinimap then LDBIcon:Show(ADDON) else LDBIcon:Hide(ADDON) end
+end
+
 local function BuildOptions()
   local UI = LibStub("BencepoUI-1.0")
   opt = UI:CreateWindow({
@@ -994,8 +1001,10 @@ local function BuildOptions()
     width = OPT_W, height = OPT_H, accent = ACCENT, db = accDB, posKey = "optPos", bugUrl = BUG_URL,
     hint = "drag to move",
   })
+  opt:Check(16, -44, "Minimap button", "Show the StatTrim button at the minimap.",
+    function() return accDB.showMinimap end, function(v) accDB.showMinimap = v and true or false; ApplyMinimap() end)
   local sf = CreateFrame("ScrollFrame", nil, opt, "UIPanelScrollFrameTemplate")
-  sf:SetPoint("TOPLEFT", 16, -44)
+  sf:SetPoint("TOPLEFT", 16, -72)
   sf:SetPoint("BOTTOMRIGHT", opt, "TOPRIGHT", -30, -(OPT_H - 40))
   opt.content = CreateFrame("Frame", nil, sf)
   opt.content:SetSize(OPT_W - 60, 10)
@@ -1028,6 +1037,26 @@ end
 -- Entry in the game's addon menu (the button next to the minimap): the list window.
 function StatTrim_OnCompartmentClick()
   if db then ToggleOptions() end
+end
+
+local function RegisterMinimap()
+  local LDB = LibStub("LibDataBroker-1.1", true)
+  LDBIcon = LibStub("LibDBIcon-1.0", true)
+  if not (LDB and LDBIcon) then return end
+  local obj = LDB:NewDataObject(ADDON, {
+    type = "launcher",
+    text = ADDON,
+    icon = "Interface\\AddOns\\StatTrim\\Icons\\minimap",
+    OnClick = function(_, button)
+      if button == "LeftButton" then StatTrim_OnCompartmentClick() end
+    end,
+    OnTooltipShow = function(tt)
+      tt:AddLine(ADDON)
+      tt:AddLine("|cffffffffLeft-click:|r settings", 0.8, 0.8, 0.8)
+    end,
+  })
+  accDB.minimap.hide = not accDB.showMinimap
+  LDBIcon:Register(ADDON, obj, accDB.minimap)
 end
 
 ---------------------------------------------------------------------------
@@ -1076,6 +1105,8 @@ ev:SetScript("OnEvent", function(self, event, arg)
     self:UnregisterEvent("ADDON_LOADED")
     StatTrimDB = StatTrimDB or {}
     accDB = StatTrimDB
+    if accDB.showMinimap == nil then accDB.showMinimap = DEFAULTS.showMinimap end
+    accDB.minimap = accDB.minimap or {}
     StatTrimCharDB = StatTrimCharDB or {}
     db = StatTrimCharDB
     -- One-time migration from account-wide StatTrimDB to per-character StatTrimCharDB.
@@ -1108,6 +1139,7 @@ ev:SetScript("OnEvent", function(self, event, arg)
     end
   elseif event == "PLAYER_LOGIN" then
     self:UnregisterEvent("PLAYER_LOGIN")
+    if accDB then RegisterMinimap() end
     if not CharacterFrame then
       print(PREFIX .. " CharacterFrame not found – addon inactive.")
       return
